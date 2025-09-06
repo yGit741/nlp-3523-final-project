@@ -1,0 +1,30 @@
+name: not-to-know
+channels:
+  - defaults
+  - conda-forge
+  - pytorch
+dependencies:
+  # Core
+  - python=3.10        # stable, widely supported Python version
+  - pip                # so you can still install pip-only packages
+
+  # ML / NLP
+  - pytorch            # deep learning framework (training & inference)
+  - torchvision        # for image tasks (needed if you later try vision-language tasks)
+  - torchaudio         # for audio tasks (keeps environment consistent with PyTorch releases)
+  - cudatoolkit=11.8   # GPU support (match this to your system’s CUDA driver)
+  - transformers       # Hugging Face library for pretrained NLP models
+  - datasets           # Hugging Face library for dataset loading & preprocessing
+  - scikit-learn       # classic ML utilities: metrics, preprocessing, train/test split
+
+  # Utilities
+  - numpy              # numerical arrays and math
+  - pandas             # data tables, CSVs, dataset manipulation
+  - matplotlib         # plotting results, quick visualization
+  - jupyterlab         # interactive notebooks for analysis & exploration
+
+  # Pip-only packages
+  - pip:
+      - spacy          # NER and linguistic preprocessing (for masking pipeline)
+      - seqeval        # evaluation metrics for sequence labeling (NER F1 score)
+      - wandb          # experiment tracking, logging runs & metrics (optional, but recommended)

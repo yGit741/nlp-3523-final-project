@@ -1,0 +1,50 @@
+# --- OS junk ---
+desktop.ini
+Thumbs.db
+.DS_Store
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+.Python
+.python-version
+
+# --- Jupyter ---
+.ipynb_checkpoints/
+
+# --- Environments & secrets ---
+.venv/
+venv/
+env/
+.env
+.env.*
+
+# --- Tool caches / reports ---
+.pytest_cache/
+.mypy_cache/
+.pylint.d/
+.ruff_cache/
+.cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# --- IDE/editor ---
+.vscode/
+.idea/
+
+# --- Logs & experiment outputs ---
+logs/
+wandb/
+mlruns/
+outputs/
+checkpoints/
+
+# --- Data (keep folder, ignore contents) ---
+data/*
+!data/.gitkeep
