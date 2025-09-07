@@ -76,15 +76,29 @@ def prepare_data(args):
     Args:
         args: Parsed command line arguments
     """
-    # TODO: Implement data preparation
-    # 1. Load dataset using DatasetLoader
-    # 2. Clean data using DataCleaner
-    # 3. Validate data using DataValidator
-    # 4. Format data using DataFormatter
-    # 5. Save processed data
-    print(f"Preparing {args.dataset} dataset...")
-    print(f"Output directory: {args.output}")
-    print("TODO: Implement data preparation pipeline")
+    
+    
+    try:
+        print(f"Starting data preparation for WikiText-103 dataset...")
+        print(f"Split: {args.split}")
+        print(f"Output directory: {args.output}")
+        
+        # Create output directory
+        output_dir = Path(args.output)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 1. Load dataset using DatasetLoader
+        print("Loading dataset...")
+        loader = DatasetLoader()
+        texts = loader.load_wikitext(split=args.split)
+        print(f"Successfully loaded {len(texts)} text samples from {args.split}")
+        
+        # TODO: Continue with cleaning, formatting, validation, and saving
+        print("Dataset loading completed. Next steps: cleaning, formatting, validation, and saving.")
+        
+    except Exception as e:
+        print(f"Data preparation failed: {str(e)}")
+        raise
 
 
 def validate_data(args):
