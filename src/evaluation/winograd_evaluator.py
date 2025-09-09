@@ -303,41 +303,6 @@ class WinogradEvaluator:
             "avg_confidence_errors": avg_conf_errors,
         }
     
-    def analyze_errors(self, results: List[Dict]) -> Dict:
-        """
-        Lightweight error analysis.
-        """
-        errors = [r for r in results if not r.get("is_correct")]
-        by_reason = {}
-        for r in errors:
-            key = r.get("reasoning", "unknown")
-            by_reason[key] = by_reason.get(key, 0) + 1
-        by_difficulty = {}
-        for r in errors:
-            key = r.get("difficulty", "unknown")
-            by_difficulty[key] = by_difficulty.get(key, 0) + 1
-        top_confident_errors = sorted(errors, key=lambda x: x.get("confidence", 0.0), reverse=True)[:10]
-        return {
-            "error_count": len(errors),
-            "errors_by_reasoning": by_reason,
-            "errors_by_difficulty": by_difficulty,
-            "top_confident_errors": top_confident_errors,
-        }
-    
-    def generate_evaluation_report(self, results: List[Dict], 
-                                 model_name: str, epsilon: float) -> Dict:
-        """
-        Generate a compact evaluation report.
-        """
-        metrics = self.get_performance_metrics(results)
-        error_analysis = self.analyze_errors(results)
-        return {
-            "model": model_name,
-            "epsilon": epsilon,
-            "metrics": metrics,
-            "error_analysis": error_analysis,
-        }
-    
     def save_results(self, results: Dict, output_path: Union[str, Path]):
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)

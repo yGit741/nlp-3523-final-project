@@ -173,18 +173,6 @@ class BenchmarkSuite:
         winograd = self.run_winograd_benchmark(model_path, epsilon_values, dataset_name, seed)
         return {"winograd": winograd}
     
-    def compare_epsilon_performance(self, results: Dict) -> Dict:
-        """
-        Compare performance across epsilon values for Winograd results.
-        """
-        eps_to_acc = {float(eps): data["metrics"]["accuracy"] for eps, data in results.get("results_by_epsilon", {}).items()}
-        best_eps = max(eps_to_acc, key=eps_to_acc.get) if eps_to_acc else None
-        return {
-            "accuracy_by_epsilon": eps_to_acc,
-            "best_epsilon": best_eps,
-            "best_accuracy": eps_to_acc.get(best_eps, 0.0) if best_eps is not None else 0.0
-        }
-    
     def save_benchmark_results(self, results: Dict, 
                              output_path: Union[str, Path]):
         output_path = Path(output_path)

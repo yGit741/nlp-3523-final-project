@@ -281,3 +281,15 @@ class ResultAnalyzer:
         if "results_by_epsilon" not in results and "winograd" not in results:
             errors.append("Missing 'results_by_epsilon' or 'winograd' key")
         return (len(errors) == 0, errors)
+    
+    def analyze_epsilon_performance(self, results: Dict) -> Dict:
+        """
+        Compare performance across epsilon values for Winograd results.
+        """
+        eps_to_acc = {float(eps): data["metrics"]["accuracy"] for eps, data in results.get("results_by_epsilon", {}).items()}
+        best_eps = max(eps_to_acc, key=eps_to_acc.get) if eps_to_acc else None
+        return {
+            "accuracy_by_epsilon": eps_to_acc,
+            "best_epsilon": best_eps,
+            "best_accuracy": eps_to_acc.get(best_eps, 0.0) if best_eps is not None else 0.0
+        }
