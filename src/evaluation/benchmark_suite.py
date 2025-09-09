@@ -88,7 +88,8 @@ class BenchmarkSuite:
     
     def run_winograd_benchmark(self, model_path: Union[str, Path], 
                               epsilon_values: List[float],
-                              dataset_name: str = "winograd_dummy") -> Dict:
+                              dataset_name: str = "winograd_dummy",
+                              seed: Optional[int] = None) -> Dict:
         """
         Run Winograd Schema Challenge benchmark.
         
@@ -96,6 +97,7 @@ class BenchmarkSuite:
             model_path: HF model name or local path
             epsilon_values: List of epsilon values to test
             dataset_name: Dataset JSON name (without extension)
+            seed: Random seed for reproducible epsilon masking
             
         Returns:
             Dict with results by epsilon and summary
@@ -105,7 +107,7 @@ class BenchmarkSuite:
 
         results_by_epsilon: Dict[str, Dict] = {}
         for eps in epsilon_values:
-            detailed = evaluator.evaluate_all_schemas(schemas, epsilon=eps)
+            detailed = evaluator.evaluate_all_schemas(schemas, epsilon=eps, seed=seed)
             metrics = evaluator.get_performance_metrics(detailed)
             results_by_epsilon[str(eps)] = {
                 "metrics": metrics,
@@ -154,11 +156,21 @@ class BenchmarkSuite:
     
     def run_full_evaluation(self, model_path: Union[str, Path], 
                           epsilon_values: List[float],
-                          dataset_name: str = "winograd_dummy") -> Dict:
+                          dataset_name: str = "winograd_dummy",
+                          seed: Optional[int] = None) -> Dict:
         """
         Run full evaluation suite (currently Winograd only).
+        
+        Args:
+            model_path: HF model name or local path
+            epsilon_values: List of epsilon values to test
+            dataset_name: Dataset JSON name (without extension)
+            seed: Random seed for reproducible epsilon masking
+            
+        Returns:
+            Dict with evaluation results
         """
-        winograd = self.run_winograd_benchmark(model_path, epsilon_values, dataset_name)
+        winograd = self.run_winograd_benchmark(model_path, epsilon_values, dataset_name, seed)
         return {"winograd": winograd}
     
     def compare_epsilon_performance(self, results: Dict) -> Dict:

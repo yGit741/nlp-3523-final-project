@@ -11,6 +11,7 @@ import json
 import math
 import random
 import re
+import warnings
 
 import torch
 import torch.nn.functional as F
@@ -58,30 +59,77 @@ class WinogradEvaluator:
         }
 
     def _is_function_word(self, token_text: str) -> bool:
+        """Check if a space-separated word is a function word (for fallback compatibility)."""
         clean = re.sub(r"[^a-z]", "", token_text.lower())
         return clean in self._function_words
 
     def _is_punctuation(self, token_text: str) -> bool:
+        """Check if a space-separated word is punctuation (for fallback compatibility)."""
         return bool(self._punct_re.match(token_text))
 
-    def _apply_simple_epsilon_masking(self, text: str, epsilon: float) -> str:
+    def _is_function_word_token(self, token: str) -> bool:
+        """Check if a tokenizer token represents a function word."""
+        # Handle subword tokens (remove ## prefix if present)
+        clean_token = token.replace("##", "").replace("Ġ", "")  # Handle BERT/GPT2 style tokens
+        clean = re.sub(r"[^a-z]", "", clean_token.lower())
+        return clean in self._function_words
+
+    def _is_punctuation_token(self, token: str) -> bool:
+        """Check if a tokenizer token represents punctuation."""
+        # Handle subword tokens
+        clean_token = token.replace("##", "").replace("Ġ", "")
+        return bool(self._punct_re.match(clean_token))
+
+    def _apply_epsilon_masking(self, text: str, epsilon: float, seed: Optional[int] = None) -> str:
         """
-        Lightweight ε-masking: preserve simple function words and punctuation; mask others.
+        Apply ε-masking using proper tokenization that matches the model.
+        
+        Args:
+            text: Input text to mask
+            epsilon: Probability of masking each content token (0.0 = no masking, 1.0 = mask all)
+            seed: Random seed for reproducibility
+            
+        Returns:
+            Masked text string
         """
         if epsilon <= 0.0:
             return text
-        # Split on whitespace to keep it simple and deterministic
-        tokens = text.split()
-        masked_tokens: List[str] = []
+        
+        # Set seed for reproducibility
+        if seed is not None:
+            random.seed(seed)
+        
+        # Tokenize using the model's tokenizer
+        tokens = self.tokenizer.tokenize(text)
+        
+        masked_tokens = []
         for token in tokens:
-            if self._is_function_word(token) or self._is_punctuation(token):
+            # Preserve function words and punctuation
+            if self._is_function_word_token(token) or self._is_punctuation_token(token):
                 masked_tokens.append(token)
-                continue
-            if random.random() < epsilon:
-                masked_tokens.append("<MASK>")
             else:
-                masked_tokens.append(token)
-        return " ".join(masked_tokens)
+                # Apply epsilon masking to content words
+                if random.random() < epsilon:
+                    # Use the tokenizer's mask token if available, otherwise fallback
+                    mask_token = getattr(self.tokenizer, 'mask_token', None) or "<MASK>"
+                    masked_tokens.append(mask_token)
+                else:
+                    masked_tokens.append(token)
+        
+        # Convert back to text using tokenizer's method
+        return self.tokenizer.convert_tokens_to_string(masked_tokens)
+
+    def _apply_simple_epsilon_masking(self, text: str, epsilon: float) -> str:
+        """
+        Legacy method for backward compatibility. Use _apply_epsilon_masking instead.
+        """
+        import warnings
+        warnings.warn(
+            "_apply_simple_epsilon_masking is deprecated. Use _apply_epsilon_masking instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        return self._apply_epsilon_masking(text, epsilon)
 
     @torch.no_grad()
     def _score_option(self, prompt: str, option: str) -> Tuple[float, float, int]:
@@ -119,16 +167,24 @@ class WinogradEvaluator:
         avg_logprob = (total_logprob / float(option_len)) if option_len > 0 else float("-inf")
         return total_logprob, avg_logprob, int(option_len)
 
-    def evaluate_schema(self, schema: Dict, epsilon: float = 0.0) -> Dict:
+    def evaluate_schema(self, schema: Dict, epsilon: float = 0.0, seed: Optional[int] = None) -> Dict:
         """
         Evaluate a single Winograd schema.
+        
+        Args:
+            schema: Winograd schema dictionary containing text, question, options, answer
+            epsilon: Probability of masking content tokens (0.0 = no masking, 1.0 = mask all)
+            seed: Random seed for reproducible masking
+            
+        Returns:
+            Detailed evaluation results
         """
         text = schema.get("text", "")
         question = schema.get("question", "")
         options: List[str] = schema.get("options", [])
         correct_answer = schema.get("answer")
 
-        masked_text = self._apply_simple_epsilon_masking(text, epsilon)
+        masked_text = self._apply_epsilon_masking(text, epsilon, seed)
         prompt = f"{masked_text} {question} Answer:"
 
         option_details = []
@@ -167,19 +223,38 @@ class WinogradEvaluator:
             "reasoning": schema.get("reasoning")
         }
     
-    def evaluate_all_schemas(self, schemas: List[Dict], epsilon: float = 0.0) -> List[Dict]:
+    def evaluate_all_schemas(self, schemas: List[Dict], epsilon: float = 0.0, seed: Optional[int] = None) -> List[Dict]:
         """
         Evaluate all schemas in dataset.
+        
+        Args:
+            schemas: List of Winograd schema dictionaries
+            epsilon: Probability of masking content tokens (0.0 = no masking, 1.0 = mask all)
+            seed: Random seed for reproducible masking
+            
+        Returns:
+            List of evaluation results
         """
         results: List[Dict] = []
-        for schema in schemas:
-            results.append(self.evaluate_schema(schema, epsilon))
+        for i, schema in enumerate(schemas):
+            # Use a deterministic seed per schema if base seed is provided
+            schema_seed = None if seed is None else seed + i
+            results.append(self.evaluate_schema(schema, epsilon, schema_seed))
         return results
     
     def evaluate_model(self, model_path: Union[str, Path], schemas: List[Dict], 
-                      epsilon: float = 0.0) -> Dict:
+                      epsilon: float = 0.0, seed: Optional[int] = None) -> Dict:
         """
         Evaluate a (potentially different) model on Winograd schemas.
+        
+        Args:
+            model_path: HF model name or local path to model
+            schemas: List of Winograd schema dictionaries
+            epsilon: Probability of masking content tokens (0.0 = no masking, 1.0 = mask all)
+            seed: Random seed for reproducible masking
+            
+        Returns:
+            Evaluation results with metrics and detailed results
         """
         model_path = str(model_path)
         if model_path != self.model_name:
@@ -192,7 +267,7 @@ class WinogradEvaluator:
             self.model.to(self.device)
             self.model.eval()
 
-        detailed = self.evaluate_all_schemas(schemas, epsilon)
+        detailed = self.evaluate_all_schemas(schemas, epsilon, seed)
         metrics = self.get_performance_metrics(detailed)
         return {"metrics": metrics, "detailed": detailed}
     
