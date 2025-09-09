@@ -2,26 +2,15 @@
 Evaluation CLI for Knowledge vs Reasoning Separation project.
 
 Usage:
-    python -m src.evaluation.evaluation --model gpt2 \
+    python -m src.evaluation.evaluate --model gpt2 \
         --epsilons 0.0,0.1,0.3 --benchmark winograd_dummy \
         --output results/eval_results.json
 """
 
-from .winograd_evaluator import WinogradEvaluator
 from .benchmark_suite import BenchmarkSuite
-from .error_analyzer import ErrorAnalyzer
-from .result_analyzer import ResultAnalyzer
-from .visualizer import ResultVisualizer
 
-__all__ = [
-    "WinogradEvaluator",
-    "BenchmarkSuite",
-    "ErrorAnalyzer",
-    "ResultAnalyzer",
-    "ResultVisualizer",
-]
 
-if __name__ == "__main__":
+def main():
     import argparse
     import json
     from pathlib import Path
@@ -67,3 +56,9 @@ if __name__ == "__main__":
         json.dump(results, f, ensure_ascii=False, indent=2)
 
     print(f"Saved evaluation results to {out_path}")
+
+
+if __name__ == "__main__":
+    main()
+
+

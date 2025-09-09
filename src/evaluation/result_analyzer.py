@@ -5,6 +5,7 @@ This module provides comprehensive analysis of evaluation results
 including statistical analysis and performance insights.
 """
 
+from pathlib import Path
 from typing import List, Dict, Optional, Union, Tuple
 import pandas as pd
 import numpy as np
@@ -24,7 +25,7 @@ class ResultAnalyzer:
     
     def __init__(self):
         """Initialize result analyzer."""
-        # TODO: Implement initialization
+        # No heavy initialization needed
         pass
     
     def analyze_performance_trends(self, results_by_epsilon: Dict[float, Dict]) -> Dict:
@@ -37,12 +38,28 @@ class ResultAnalyzer:
         Returns:
             Performance trend analysis
         """
-        # TODO: Implement trend analysis
-        # - Performance curves
-        # - Optimal epsilon identification
-        # - Trend significance
-        # - Performance trade-offs
-        pass
+        # Accept mapping from epsilon-> {metrics: {...}}
+        if "results_by_epsilon" in results_by_epsilon:
+            mapping = results_by_epsilon["results_by_epsilon"]
+        else:
+            mapping = results_by_epsilon
+
+        eps = sorted([float(e) for e in mapping.keys()])
+        accs = np.array([mapping[str(e)]["metrics"]["accuracy"] if str(e) in mapping else mapping[e]["metrics"]["accuracy"] for e in eps])
+
+        # Simple trend: correlation between epsilon and accuracy
+        corr = float(np.corrcoef(eps, accs)[0, 1]) if len(eps) > 1 else 0.0
+        best_idx = int(np.argmax(accs)) if len(accs) > 0 else -1
+        best_eps = eps[best_idx] if best_idx >= 0 else None
+        best_acc = float(accs[best_idx]) if best_idx >= 0 else 0.0
+
+        return {
+            "epsilon_values": eps,
+            "accuracies": accs.tolist(),
+            "correlation_epsilon_accuracy": corr,
+            "best_epsilon": best_eps,
+            "best_accuracy": best_acc,
+        }
     
     def compare_model_performance(self, model_results: Dict[str, Dict]) -> Dict:
         """
@@ -54,12 +71,24 @@ class ResultAnalyzer:
         Returns:
             Model comparison analysis
         """
-        # TODO: Implement model comparison
-        # - Performance metrics comparison
-        # - Statistical significance testing
-        # - Model ranking
-        # - Performance differences
-        pass
+        rows = []
+        for name, res in model_results.items():
+            if "results_by_epsilon" in res:
+                rb = res["results_by_epsilon"]
+            elif "winograd" in res:
+                rb = res["winograd"]["results_by_epsilon"]
+            else:
+                rb = res
+            best_acc = 0.0
+            best_eps = None
+            for eps, data in rb.items():
+                acc = data["metrics"]["accuracy"]
+                if acc > best_acc:
+                    best_acc = acc
+                    best_eps = float(eps)
+            rows.append({"model": name, "best_accuracy": best_acc, "best_epsilon": best_eps})
+        df = pd.DataFrame(rows).sort_values("best_accuracy", ascending=False)
+        return {"leaderboard": df.to_dict(orient="records")}
     
     def calculate_statistical_significance(self, results1: List[float], 
                                          results2: List[float]) -> Dict:
@@ -73,12 +102,18 @@ class ResultAnalyzer:
         Returns:
             Statistical significance analysis
         """
-        # TODO: Implement statistical significance testing
-        # - t-test
-        # - Mann-Whitney U test
-        # - Effect size calculation
-        # - Confidence intervals
-        pass
+        if len(results1) < 2 or len(results2) < 2:
+            return {"t_test_p": None, "mannwhitney_p": None, "cohen_d": None}
+        t_stat, t_p = stats.ttest_ind(results1, results2, equal_var=False)
+        u_stat, u_p = stats.mannwhitneyu(results1, results2, alternative="two-sided")
+        # Cohen's d
+        m1, m2 = np.mean(results1), np.mean(results2)
+        s1, s2 = np.std(results1, ddof=1), np.std(results2, ddof=1)
+        # Pooled SD
+        n1, n2 = len(results1), len(results2)
+        sp = np.sqrt(((n1 - 1) * s1 ** 2 + (n2 - 1) * s2 ** 2) / (n1 + n2 - 2)) if (n1 + n2 - 2) > 0 else 0.0
+        d = (m1 - m2) / sp if sp > 0 else None
+        return {"t_test_p": float(t_p), "mannwhitney_p": float(u_p), "cohen_d": float(d) if d is not None else None}
     
     def analyze_performance_distribution(self, results: List[Dict]) -> Dict:
         """
@@ -90,12 +125,14 @@ class ResultAnalyzer:
         Returns:
             Performance distribution analysis
         """
-        # TODO: Implement distribution analysis
-        # - Performance histograms
-        # - Distribution statistics
-        # - Outlier identification
-        # - Performance variability
-        pass
+        confs = [r.get("confidence", 0.0) for r in results]
+        accs = [1.0 if r.get("is_correct") else 0.0 for r in results]
+        return {
+            "confidence_mean": float(np.mean(confs)) if confs else 0.0,
+            "confidence_std": float(np.std(confs)) if confs else 0.0,
+            "accuracy_mean": float(np.mean(accs)) if accs else 0.0,
+            "accuracy_std": float(np.std(accs)) if accs else 0.0,
+        }
     
     def identify_performance_factors(self, results: List[Dict]) -> Dict:
         """
@@ -107,12 +144,16 @@ class ResultAnalyzer:
         Returns:
             Performance factor analysis
         """
-        # TODO: Implement factor analysis
-        # - Difficulty impact
-        # - Context length impact
-        # - Question type impact
-        # - Model-specific factors
-        pass
+        df = pd.DataFrame(results)
+        if df.empty:
+            return {}
+        df["difficulty"].fillna("unknown", inplace=True)
+        df["is_correct_int"] = df["is_correct"].astype(int)
+        by_diff = df.groupby("difficulty")["is_correct_int"].mean().to_dict()
+        # Approximate context length by original text length
+        df["context_len"] = df["original_text"].astype(str).apply(len)
+        corr = float(np.corrcoef(df["context_len"], df["is_correct_int"])[0, 1]) if len(df) > 1 else 0.0
+        return {"accuracy_by_difficulty": by_diff, "corr_contextlen_accuracy": corr}
     
     def calculate_confidence_intervals(self, results: List[float], 
                                      confidence_level: float = 0.95) -> Tuple[float, float]:
@@ -126,11 +167,14 @@ class ResultAnalyzer:
         Returns:
             Tuple of (lower_bound, upper_bound)
         """
-        # TODO: Implement confidence interval calculation
-        # - Bootstrap confidence intervals
-        # - Parametric confidence intervals
-        # - Multiple comparison correction
-        pass
+        arr = np.array(results)
+        if arr.size == 0:
+            return (0.0, 0.0)
+        mean = float(np.mean(arr))
+        std = float(np.std(arr, ddof=1)) if arr.size > 1 else 0.0
+        z = 1.96 if abs(confidence_level - 0.95) < 1e-6 else stats.norm.ppf((1 + confidence_level) / 2.0)
+        half_width = z * std / np.sqrt(arr.size) if arr.size > 1 else 0.0
+        return (mean - half_width, mean + half_width)
     
     def analyze_correlation_patterns(self, results: List[Dict]) -> Dict:
         """
@@ -142,12 +186,17 @@ class ResultAnalyzer:
         Returns:
             Correlation analysis
         """
-        # TODO: Implement correlation analysis
-        # - Confidence vs accuracy correlation
-        # - Difficulty vs performance correlation
-        # - Context length vs performance correlation
-        # - Cross-metric correlations
-        pass
+        df = pd.DataFrame(results)
+        if df.empty:
+            return {"correlations": {}}
+        df["is_correct_int"] = df["is_correct"].astype(int)
+        corr = {}
+        if "confidence" in df:
+            corr["confidence_accuracy"] = float(np.corrcoef(df["confidence"], df["is_correct_int"])[0, 1]) if len(df) > 1 else 0.0
+        if "original_text" in df:
+            df["context_len"] = df["original_text"].astype(str).apply(len)
+            corr["contextlen_accuracy"] = float(np.corrcoef(df["context_len"], df["is_correct_int"])[0, 1]) if len(df) > 1 else 0.0
+        return {"correlations": corr}
     
     def generate_performance_summary(self, results: Dict) -> Dict:
         """
@@ -159,12 +208,12 @@ class ResultAnalyzer:
         Returns:
             Performance summary
         """
-        # TODO: Implement performance summary
-        # - Key metrics
-        # - Performance highlights
-        # - Statistical significance
-        # - Recommendations
-        pass
+        trend = self.analyze_performance_trends(results)
+        return {
+            "best_epsilon": trend.get("best_epsilon"),
+            "best_accuracy": trend.get("best_accuracy"),
+            "correlation_epsilon_accuracy": trend.get("correlation_epsilon_accuracy"),
+        }
     
     def create_performance_report(self, results: Dict, 
                                 model_name: str) -> Dict:
@@ -178,12 +227,11 @@ class ResultAnalyzer:
         Returns:
             Comprehensive performance report
         """
-        # TODO: Implement performance report creation
-        # - Executive summary
-        # - Detailed analysis
-        # - Statistical findings
-        # - Actionable insights
-        pass
+        summary = self.generate_performance_summary(results)
+        return {
+            "model": model_name,
+            "summary": summary,
+        }
     
     def export_analysis_results(self, analysis: Dict, 
                               output_path: Union[str, Path]):
@@ -194,11 +242,12 @@ class ResultAnalyzer:
             analysis: Analysis results
             output_path: Output file path
         """
-        # TODO: Implement results export
-        # - Export to JSON/CSV
-        # - Include metadata
-        # - Ensure reproducibility
-        pass
+        import json
+        from pathlib import Path
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with output_path.open("w", encoding="utf-8") as f:
+            json.dump(analysis, f, ensure_ascii=False, indent=2)
     
     def load_analysis_results(self, input_path: Union[str, Path]) -> Dict:
         """
@@ -210,8 +259,11 @@ class ResultAnalyzer:
         Returns:
             Loaded analysis results
         """
-        # TODO: Implement results loading
-        pass
+        import json
+        from pathlib import Path
+        p = Path(input_path)
+        with p.open("r", encoding="utf-8") as f:
+            return json.load(f)
     
     def validate_results(self, results: Dict) -> Tuple[bool, List[str]]:
         """
@@ -223,9 +275,9 @@ class ResultAnalyzer:
         Returns:
             Tuple of (is_valid, error_messages)
         """
-        # TODO: Implement results validation
-        # - Check required fields
-        # - Validate data types
-        # - Check consistency
-        # - Return validation status
-        pass
+        errors: List[str] = []
+        if not isinstance(results, dict):
+            return False, ["Results must be a dict"]
+        if "results_by_epsilon" not in results and "winograd" not in results:
+            errors.append("Missing 'results_by_epsilon' or 'winograd' key")
+        return (len(errors) == 0, errors)

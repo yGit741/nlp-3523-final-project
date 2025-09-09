@@ -24,7 +24,7 @@ class ResultVisualizer:
     - Interactive plots
     """
     
-    def __init__(self, style: str = "seaborn", figsize: tuple = (12, 8)):
+    def __init__(self, style: str = "seaborn-v0_8", figsize: tuple = (12, 8)):
         """
         Initialize result visualizer.
         
@@ -34,9 +34,12 @@ class ResultVisualizer:
         """
         self.style = style
         self.figsize = figsize
-        # TODO: Implement initialization
-        # - Set matplotlib style
-        # - Configure plotting parameters
+        try:
+            plt.style.use(self.style)
+        except Exception:
+            # Fallback to default style if unavailable
+            plt.style.use("default")
+        sns.set_context("talk")
     
     def plot_epsilon_performance(self, results_by_epsilon: Dict[float, Dict], 
                                output_path: Optional[Union[str, Path]] = None):
@@ -47,12 +50,44 @@ class ResultVisualizer:
             results_by_epsilon: Results organized by epsilon
             output_path: Optional output path for saving plot
         """
-        # TODO: Implement epsilon performance plotting
-        # - Accuracy vs epsilon
-        # - Confidence vs epsilon
-        # - Error count vs epsilon
-        # - Multiple metrics on same plot
-        pass
+        # Accept either direct mapping {eps: {metrics...}} or full suite output
+        if "results_by_epsilon" in results_by_epsilon:
+            mapping = results_by_epsilon["results_by_epsilon"]
+        else:
+            mapping = results_by_epsilon
+
+        eps_values = sorted([float(e) for e in mapping.keys()])
+        accuracies = [mapping[str(e)]["metrics"]["accuracy"] if str(e) in mapping else mapping[e]["metrics"]["accuracy"] for e in eps_values]
+        avg_conf = [mapping[str(e)]["metrics"].get("avg_confidence", 0.0) if str(e) in mapping else mapping[e]["metrics"].get("avg_confidence", 0.0) for e in eps_values]
+        error_counts = []
+        for e in eps_values:
+            m = mapping[str(e)]["metrics"] if str(e) in mapping else mapping[e]["metrics"]
+            error_counts.append(m["total"] - m["correct"])
+
+        fig, axes = plt.subplots(1, 3, figsize=self.figsize)
+
+        axes[0].plot(eps_values, accuracies, marker="o")
+        axes[0].set_title("Accuracy vs Epsilon")
+        axes[0].set_xlabel("Epsilon")
+        axes[0].set_ylabel("Accuracy")
+        axes[0].grid(True, alpha=0.3)
+
+        axes[1].plot(eps_values, avg_conf, marker="s", color="#2a9d8f")
+        axes[1].set_title("Avg Confidence vs Epsilon")
+        axes[1].set_xlabel("Epsilon")
+        axes[1].set_ylabel("Avg Confidence")
+        axes[1].grid(True, alpha=0.3)
+
+        axes[2].bar([str(e) for e in eps_values], error_counts, color="#e76f51")
+        axes[2].set_title("Error Count vs Epsilon")
+        axes[2].set_xlabel("Epsilon")
+        axes[2].set_ylabel("Errors")
+        axes[2].grid(True, axis="y", alpha=0.3)
+
+        plt.tight_layout()
+        if output_path:
+            fig.savefig(output_path, dpi=300, bbox_inches="tight")
+        return fig, axes
     
     def plot_difficulty_analysis(self, results: List[Dict], 
                                output_path: Optional[Union[str, Path]] = None):
@@ -63,12 +98,37 @@ class ResultVisualizer:
             results: Evaluation results
             output_path: Optional output path for saving plot
         """
-        # TODO: Implement difficulty analysis plotting
-        # - Accuracy by difficulty
-        # - Error distribution by difficulty
-        # - Confidence by difficulty
-        # - Performance comparison
-        pass
+        # Aggregate by difficulty
+        df = pd.DataFrame(results)
+        if df.empty:
+            raise ValueError("No results provided for difficulty analysis")
+        df["difficulty"].fillna("unknown", inplace=True)
+        agg = df.groupby("difficulty").agg(
+            total=("is_correct", "count"),
+            correct=("is_correct", "sum"),
+            avg_confidence=("confidence", "mean"),
+        ).reset_index()
+        agg["accuracy"] = agg["correct"] / agg["total"].replace(0, np.nan)
+
+        fig, axes = plt.subplots(1, 3, figsize=self.figsize)
+
+        sns.barplot(ax=axes[0], data=agg, x="difficulty", y="accuracy", color="#457b9d")
+        axes[0].set_title("Accuracy by Difficulty")
+        axes[0].set_ylim(0, 1)
+        axes[0].grid(True, axis="y", alpha=0.3)
+
+        sns.barplot(ax=axes[1], data=agg, x="difficulty", y="total", color="#e9c46a")
+        axes[1].set_title("Count by Difficulty")
+        axes[1].grid(True, axis="y", alpha=0.3)
+
+        sns.barplot(ax=axes[2], data=agg, x="difficulty", y="avg_confidence", color="#2a9d8f")
+        axes[2].set_title("Avg Confidence by Difficulty")
+        axes[2].grid(True, axis="y", alpha=0.3)
+
+        plt.tight_layout()
+        if output_path:
+            fig.savefig(output_path, dpi=300, bbox_inches="tight")
+        return fig, axes
     
     def plot_confidence_analysis(self, results: List[Dict], 
                                output_path: Optional[Union[str, Path]] = None):
@@ -79,12 +139,46 @@ class ResultVisualizer:
             results: Evaluation results
             output_path: Optional output path for saving plot
         """
-        # TODO: Implement confidence analysis plotting
-        # - Confidence distribution
-        # - Confidence vs accuracy scatter
-        # - Calibration plots
-        # - Overconfidence analysis
-        pass
+        df = pd.DataFrame(results)
+        if df.empty:
+            raise ValueError("No results provided for confidence analysis")
+        df["is_correct_int"] = df["is_correct"].astype(int)
+
+        fig, axes = plt.subplots(1, 3, figsize=self.figsize)
+
+        # Distribution by correctness
+        sns.kdeplot(ax=axes[0], data=df, x="confidence", hue="is_correct", common_norm=False, fill=True)
+        axes[0].set_title("Confidence Distribution (Correct vs Error)")
+        axes[0].set_xlim(0, 1)
+        axes[0].grid(True, alpha=0.3)
+
+        # Scatter confidence vs correctness (jittered)
+        jitter = (np.random.rand(len(df)) - 0.5) * 0.05
+        axes[1].scatter(df["confidence"], df["is_correct_int"] + jitter, alpha=0.5)
+        axes[1].set_title("Confidence vs Correctness")
+        axes[1].set_xlabel("Confidence")
+        axes[1].set_yticks([0, 1])
+        axes[1].set_yticklabels(["Error", "Correct"])
+        axes[1].set_xlim(0, 1)
+        axes[1].grid(True, alpha=0.3)
+
+        # Calibration bins
+        bins = np.linspace(0.0, 1.0, 11)
+        df["conf_bin"] = pd.cut(df["confidence"], bins=bins, include_lowest=True)
+        cal = df.groupby("conf_bin").agg(acc=("is_correct_int", "mean"), count=("is_correct_int", "size")).reset_index()
+        axes[2].plot([b.mid for b in cal["conf_bin"].cat.categories], cal["acc"], marker="o")
+        axes[2].plot([0, 1], [0, 1], linestyle="--", color="gray")
+        axes[2].set_title("Calibration (Accuracy vs Confidence)")
+        axes[2].set_xlabel("Confidence bin midpoint")
+        axes[2].set_ylabel("Empirical Accuracy")
+        axes[2].set_xlim(0, 1)
+        axes[2].set_ylim(0, 1)
+        axes[2].grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        if output_path:
+            fig.savefig(output_path, dpi=300, bbox_inches="tight")
+        return fig, axes
     
     def plot_error_patterns(self, error_analysis: Dict, 
                           output_path: Optional[Union[str, Path]] = None):
@@ -95,12 +189,33 @@ class ResultVisualizer:
             error_analysis: Error analysis results
             output_path: Optional output path for saving plot
         """
-        # TODO: Implement error pattern plotting
-        # - Error type distribution
-        # - Error frequency charts
-        # - Pattern identification plots
-        # - Error correlation heatmaps
-        pass
+        fig, axes = plt.subplots(1, 2, figsize=self.figsize)
+
+        by_reason = error_analysis.get("errors_by_reasoning", {})
+        if by_reason:
+            reasons = list(by_reason.keys())
+            counts = [by_reason[r] for r in reasons]
+            sns.barplot(ax=axes[0], x=reasons, y=counts, color="#e76f51")
+            axes[0].set_title("Errors by Reasoning Type")
+            axes[0].tick_params(axis='x', rotation=30)
+            axes[0].grid(True, axis="y", alpha=0.3)
+        else:
+            axes[0].axis('off')
+
+        by_diff = error_analysis.get("errors_by_difficulty", {})
+        if by_diff:
+            diffs = list(by_diff.keys())
+            counts = [by_diff[d] for d in diffs]
+            sns.barplot(ax=axes[1], x=diffs, y=counts, color="#457b9d")
+            axes[1].set_title("Errors by Difficulty")
+            axes[1].grid(True, axis="y", alpha=0.3)
+        else:
+            axes[1].axis('off')
+
+        plt.tight_layout()
+        if output_path:
+            fig.savefig(output_path, dpi=300, bbox_inches="tight")
+        return fig, axes
     
     def plot_model_comparison(self, model_results: Dict[str, Dict], 
                             output_path: Optional[Union[str, Path]] = None):
@@ -111,12 +226,32 @@ class ResultVisualizer:
             model_results: Results for different models
             output_path: Optional output path for saving plot
         """
-        # TODO: Implement model comparison plotting
-        # - Performance comparison bars
-        # - Model ranking plots
-        # - Statistical significance visualization
-        # - Performance trade-offs
-        pass
+        names = []
+        best_accs = []
+        for name, res in model_results.items():
+            # Accept either full suite or winograd block
+            if "results_by_epsilon" in res:
+                rb = res["results_by_epsilon"]
+            elif "winograd" in res:
+                rb = res["winograd"]["results_by_epsilon"]
+            else:
+                rb = res
+            # Best accuracy across eps
+            accs = []
+            for eps, data in rb.items():
+                accs.append(data["metrics"]["accuracy"])
+            names.append(name)
+            best_accs.append(max(accs) if accs else 0.0)
+
+        fig, ax = plt.subplots(figsize=(max(8, len(names) * 1.2), 6))
+        sns.barplot(ax=ax, x=names, y=best_accs, color="#264653")
+        ax.set_ylim(0, 1)
+        ax.set_title("Best Accuracy by Model")
+        ax.grid(True, axis="y", alpha=0.3)
+        plt.tight_layout()
+        if output_path:
+            fig.savefig(output_path, dpi=300, bbox_inches="tight")
+        return fig, ax
     
     def plot_statistical_analysis(self, analysis_results: Dict, 
                                 output_path: Optional[Union[str, Path]] = None):
@@ -127,12 +262,24 @@ class ResultVisualizer:
             analysis_results: Statistical analysis results
             output_path: Optional output path for saving plot
         """
-        # TODO: Implement statistical analysis plotting
-        # - Distribution plots
-        # - Correlation heatmaps
-        # - Significance testing visualization
-        # - Confidence intervals
-        pass
+        # This is a generic placeholder that attempts to visualize provided arrays
+        fig, ax = plt.subplots(figsize=self.figsize)
+        if "distribution" in analysis_results:
+            data = analysis_results["distribution"]
+            sns.histplot(data, bins=20, kde=True, ax=ax)
+            ax.set_title("Distribution")
+        elif "correlation_matrix" in analysis_results and "labels" in analysis_results:
+            mat = np.array(analysis_results["correlation_matrix"])
+            labels = analysis_results["labels"]
+            sns.heatmap(mat, xticklabels=labels, yticklabels=labels, annot=True, fmt=".2f", cmap="coolwarm", ax=ax)
+            ax.set_title("Correlation Matrix")
+        else:
+            ax.text(0.5, 0.5, "No statistical analysis to plot", ha='center', va='center')
+            ax.axis('off')
+        plt.tight_layout()
+        if output_path:
+            fig.savefig(output_path, dpi=300, bbox_inches="tight")
+        return fig, ax
     
     def create_dashboard(self, results: Dict, 
                         output_path: Union[str, Path]):
@@ -143,12 +290,30 @@ class ResultVisualizer:
             results: Complete evaluation results
             output_path: Output path for dashboard
         """
-        # TODO: Implement dashboard creation
-        # - Multiple subplots
-        # - Comprehensive overview
-        # - Interactive elements
-        # - Export to HTML/PDF
-        pass
+        # Basic dashboard for Winograd results
+        if "winograd" in results:
+            winograd = results["winograd"]
+        else:
+            winograd = results
+        fig1, _ = self.plot_epsilon_performance(winograd)
+        fig2 = None
+        # If possible, plot difficulty analysis for best epsilon
+        try:
+            rb = winograd["results_by_epsilon"]
+            # Find best eps
+            best_eps = max(rb, key=lambda k: rb[k]["metrics"]["accuracy"]) if rb else None
+            if best_eps is not None:
+                detailed = rb[best_eps]["detailed"]
+                fig2, _ = self.plot_difficulty_analysis(detailed)
+        except Exception:
+            pass
+        # Save concatenated dashboard as separate images for simplicity
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        fig1.savefig(output_path.with_name(output_path.stem + "_epsilon.png"), dpi=300, bbox_inches="tight")
+        if fig2 is not None:
+            fig2.savefig(output_path.with_name(output_path.stem + "_difficulty.png"), dpi=300, bbox_inches="tight")
+        return str(output_path)
     
     def plot_training_curves(self, training_history: Dict, 
                            output_path: Optional[Union[str, Path]] = None):
@@ -159,12 +324,21 @@ class ResultVisualizer:
             training_history: Training history data
             output_path: Optional output path for saving plot
         """
-        # TODO: Implement training curve plotting
-        # - Loss curves
-        # - Accuracy curves
-        # - Learning rate schedules
-        # - Multiple epsilon comparison
-        pass
+        fig, ax = plt.subplots(figsize=self.figsize)
+        if "loss" in training_history:
+            ax.plot(training_history["loss"], label="loss")
+        if "val_loss" in training_history:
+            ax.plot(training_history["val_loss"], label="val_loss")
+        if "accuracy" in training_history:
+            ax.plot(training_history["accuracy"], label="accuracy")
+        ax.set_title("Training Curves")
+        ax.set_xlabel("Step/Epoch")
+        ax.grid(True, alpha=0.3)
+        ax.legend()
+        plt.tight_layout()
+        if output_path:
+            fig.savefig(output_path, dpi=300, bbox_inches="tight")
+        return fig, ax
     
     def create_heatmap(self, data: np.ndarray, labels: List[str], 
                       title: str, output_path: Optional[Union[str, Path]] = None):
@@ -177,12 +351,13 @@ class ResultVisualizer:
             title: Plot title
             output_path: Optional output path for saving plot
         """
-        # TODO: Implement heatmap creation
-        # - Correlation matrices
-        # - Performance matrices
-        # - Error pattern matrices
-        # - Customizable styling
-        pass
+        fig, ax = plt.subplots(figsize=self.figsize)
+        sns.heatmap(data, xticklabels=labels, yticklabels=labels, annot=True, fmt=".2f", cmap="viridis", ax=ax)
+        ax.set_title(title)
+        plt.tight_layout()
+        if output_path:
+            fig.savefig(output_path, dpi=300, bbox_inches="tight")
+        return fig, ax
     
     def plot_distribution(self, data: List[float], title: str, 
                          output_path: Optional[Union[str, Path]] = None):
@@ -194,12 +369,15 @@ class ResultVisualizer:
             title: Plot title
             output_path: Optional output path for saving plot
         """
-        # TODO: Implement distribution plotting
-        # - Histograms
-        # - Box plots
-        # - Violin plots
-        # - Statistical overlays
-        pass
+        fig, axes = plt.subplots(1, 2, figsize=self.figsize)
+        sns.histplot(data, bins=20, kde=True, ax=axes[0])
+        axes[0].set_title(f"Histogram - {title}")
+        sns.violinplot(y=data, ax=axes[1], color="#a8dadc")
+        axes[1].set_title(f"Violin - {title}")
+        plt.tight_layout()
+        if output_path:
+            fig.savefig(output_path, dpi=300, bbox_inches="tight")
+        return fig, axes
     
     def save_plot(self, fig, output_path: Union[str, Path], 
                  format: str = "png", dpi: int = 300):
@@ -212,11 +390,9 @@ class ResultVisualizer:
             format: File format (png, pdf, svg)
             dpi: Resolution for raster formats
         """
-        # TODO: Implement plot saving
-        # - Multiple format support
-        # - High resolution output
-        # - Metadata inclusion
-        pass
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(output_path.with_suffix(f".{format}"), format=format, dpi=dpi, bbox_inches="tight")
     
     def set_plot_style(self, style: str):
         """
@@ -225,8 +401,9 @@ class ResultVisualizer:
         Args:
             style: Matplotlib style name
         """
-        # TODO: Implement style setting
-        # - Apply matplotlib style
-        # - Custom style configurations
-        # - Consistent theming
-        pass
+        self.style = style
+        try:
+            plt.style.use(style)
+        except Exception:
+            plt.style.use("default")
+        sns.set_context("talk")
