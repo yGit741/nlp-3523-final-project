@@ -57,19 +57,52 @@ class ResultVisualizer:
             mapping = results_by_epsilon
 
         eps_values = sorted([float(e) for e in mapping.keys()])
-        accuracies = [mapping[str(e)]["metrics"]["accuracy"] if str(e) in mapping else mapping[e]["metrics"]["accuracy"] for e in eps_values]
-        avg_conf = [mapping[str(e)]["metrics"].get("avg_confidence", 0.0) if str(e) in mapping else mapping[e]["metrics"].get("avg_confidence", 0.0) for e in eps_values]
+        # Determine primary metric to plot
+        first_metrics = None
+        for v in mapping.values():
+            if isinstance(v, dict) and "metrics" in v:
+                first_metrics = v["metrics"]
+                break
+        metric_key = None
+        if first_metrics:
+            for k in ("accuracy", "f1", "em"):
+                if k in first_metrics:
+                    metric_key = k
+                    break
+        metric_key = metric_key or (list(first_metrics.keys())[0] if first_metrics else "accuracy")
+
+        # Collect y values for the chosen metric
+        metric_values = [
+            (mapping[str(e)]["metrics"].get(metric_key) if str(e) in mapping else mapping[e]["metrics"].get(metric_key))
+            for e in eps_values
+        ]
+
+        # Avg confidence (if available)
+        avg_conf = [
+            (mapping[str(e)]["metrics"].get("avg_confidence", 0.0) if str(e) in mapping else mapping[e]["metrics"].get("avg_confidence", 0.0))
+            for e in eps_values
+        ]
+
+        # Error counts if available; fall back to EM-derived errors
         error_counts = []
         for e in eps_values:
             m = mapping[str(e)]["metrics"] if str(e) in mapping else mapping[e]["metrics"]
-            error_counts.append(m["total"] - m["correct"])
+            if "total" in m and "correct" in m:
+                errors = m["total"] - m["correct"]
+            elif "total" in m and "em" in m:
+                # Approximate errors from EM proportion
+                errors = int(round(m["total"] * (1.0 - float(m["em"]))))
+            else:
+                errors = 0
+            error_counts.append(errors)
 
         fig, axes = plt.subplots(1, 3, figsize=self.figsize)
 
-        axes[0].plot(eps_values, accuracies, marker="o")
-        axes[0].set_title("Accuracy vs Epsilon")
+        axes[0].plot(eps_values, metric_values, marker="o")
+        axes[0].set_title("Performance vs Epsilon")
         axes[0].set_xlabel("Epsilon")
-        axes[0].set_ylabel("Accuracy")
+        ylabel = {"accuracy": "Accuracy", "f1": "F1", "em": "EM"}.get(metric_key, metric_key)
+        axes[0].set_ylabel(ylabel)
         axes[0].grid(True, alpha=0.3)
 
         axes[1].plot(eps_values, avg_conf, marker="s", color="#2a9d8f")
@@ -300,8 +333,18 @@ class ResultVisualizer:
         # If possible, plot difficulty analysis for best epsilon
         try:
             rb = winograd["results_by_epsilon"]
-            # Find best eps
-            best_eps = max(rb, key=lambda k: rb[k]["metrics"]["accuracy"]) if rb else None
+            # Select metric for best epsilon
+            metric_key = None
+            sample_metrics = None
+            if rb:
+                sample_metrics = next(iter(rb.values())).get("metrics", {})
+            if sample_metrics:
+                for k in ("accuracy", "f1", "em"):
+                    if k in sample_metrics:
+                        metric_key = k
+                        break
+            metric_key = metric_key or "accuracy"
+            best_eps = max(rb, key=lambda k: rb[k]["metrics"].get(metric_key, 0.0)) if rb else None
             if best_eps is not None:
                 detailed = rb[best_eps]["detailed"]
                 fig2, _ = self.plot_difficulty_analysis(detailed)

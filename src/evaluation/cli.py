@@ -16,15 +16,23 @@ Usage examples:
       python -m src.evaluation.cli --suite glue --model gpt2 \
         --glue_tasks SST-2,MRPC --glue_datasets SST-2:sst-2,MRPC:mrpc \
         --epsilons 0.0,0.1 --seed 42 --output results/glue.json
+
+  - All:
+      python -m src.evaluation.cli --suite all --model gpt2 \
+        --epsilons 0.0,0.1 --seed 42 --output results/all.json
 """
 
 from .benchmark_suite import BenchmarkSuite
+from .visualizer import ResultVisualizer
+from .result_analyzer import ResultAnalyzer
+from .error_analyzer import ErrorAnalyzer
 
 
 def main():
     import argparse
     import json
     from pathlib import Path
+    import time
 
     parser = argparse.ArgumentParser(description="Run evaluation benchmarks")
     parser.add_argument(
@@ -69,6 +77,12 @@ def main():
         type=str,
         default="results/eval_results.json",
         help="Output JSON path",
+    )
+    parser.add_argument(
+        "--output_dir",
+        type=str,
+        default="",
+        help="If set, write a structured run folder here; otherwise auto-create under results/",
     )
     parser.add_argument(
         "--seed",
@@ -155,12 +169,205 @@ def main():
     else:
         raise SystemExit(f"Unknown suite: {args.suite}")
 
+    # Create structured run directory <model>_<benchmark>_<timestamp>
+    model_label = str(args.model).replace("/", "-")
+    if args.suite == "winograd":
+        bench_label = winograd_ds
+    elif args.suite == "squad":
+        bench_label = squad_ds
+    elif args.suite == "glue":
+        bench_label = "glue"
+    else:
+        bench_label = "all"
+    timestamp = int(time.time())
+    if args.output_dir:
+        run_dir = Path(args.output_dir)
+    else:
+        run_dir = Path("results") / f"{model_label}_{bench_label}_{timestamp}"
+    plots_dir = run_dir / "plots"
+    reports_dir = run_dir / "reports"
+    plots_dir.mkdir(parents=True, exist_ok=True)
+    reports_dir.mkdir(parents=True, exist_ok=True)
+
+    # Save combined results.json
+    with (run_dir / "results.json").open("w", encoding="utf-8") as f:
+        json.dump(results, f, ensure_ascii=False, indent=2)
+
+    viz = ResultVisualizer()
+    ra = ResultAnalyzer()
+    ea = ErrorAnalyzer()
+
+    # Generate suite-specific artifacts
+    if args.suite == "winograd":
+        # Save suite-level JSON
+        with (run_dir / "winograd_results.json").open("w", encoding="utf-8") as f:
+            json.dump(results, f, ensure_ascii=False, indent=2)
+        # Per-epsilon detailed results
+        for eps_key, data in results.get("results_by_epsilon", {}).items():
+            detailed = data.get("detailed", [])
+            with (run_dir / f"winograd_detailed_eps_{eps_key}.json").open("w", encoding="utf-8") as f:
+                json.dump(detailed, f, ensure_ascii=False, indent=2)
+        # Plots
+        viz.plot_epsilon_performance(results, output_path=plots_dir / "winograd_epsilon.png")
+        # Error/difficulty/confidence for best epsilon
+        best_eps = results.get("summary", {}).get("best_epsilon")
+        if best_eps is not None:
+            key = str(best_eps)
+            if key in results.get("results_by_epsilon", {}):
+                best_detailed = results["results_by_epsilon"][key]["detailed"]
+                try:
+                    viz.plot_difficulty_analysis(best_detailed, output_path=plots_dir / "winograd_difficulty.png")
+                except Exception:
+                    pass
+                try:
+                    viz.plot_confidence_analysis(best_detailed, output_path=plots_dir / "winograd_confidence.png")
+                except Exception:
+                    pass
+                # Error report
+                try:
+                    err_report = ea.generate_error_report(best_detailed, model_name=args.model, epsilon=float(best_eps))
+                    with (reports_dir / "winograd_error_report.json").open("w", encoding="utf-8") as f:
+                        json.dump(err_report, f, ensure_ascii=False, indent=2)
+                except Exception:
+                    pass
+        # Performance report
+        try:
+            perf_report = ra.create_performance_report(results, model_name=args.model)
+            with (reports_dir / "winograd_performance_report.json").open("w", encoding="utf-8") as f:
+                json.dump(perf_report, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    elif args.suite == "squad":
+        # Save suite-level JSON
+        with (run_dir / "squad_results.json").open("w", encoding="utf-8") as f:
+            json.dump(results, f, ensure_ascii=False, indent=2)
+        # Per-epsilon detailed
+        for eps_key, data in results.get("results_by_epsilon", {}).items():
+            detailed = data.get("detailed", [])
+            with (run_dir / f"squad_detailed_eps_{eps_key}.json").open("w", encoding="utf-8") as f:
+                json.dump(detailed, f, ensure_ascii=False, indent=2)
+        # Epsilon performance plot (metric-agnostic: will use F1 if present)
+        viz.plot_epsilon_performance(results, output_path=plots_dir / "squad_epsilon.png")
+        # Performance report
+        try:
+            perf_report = ra.create_performance_report(results, model_name=args.model)
+            with (reports_dir / "squad_performance_report.json").open("w", encoding="utf-8") as f:
+                json.dump(perf_report, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    elif args.suite == "glue":
+        # Save suite-level JSON
+        with (run_dir / "glue_results.json").open("w", encoding="utf-8") as f:
+            json.dump(results, f, ensure_ascii=False, indent=2)
+        # Per-task artifacts
+        per_task = results.get("per_task", {}) or {}
+        for task, task_data in per_task.items():
+            rb = task_data.get("results_by_epsilon", {})
+            # Per-epsilon detailed saves
+            for eps_key, data in rb.items():
+                detailed = data.get("detailed", [])
+                with (run_dir / f"glue_{task}_detailed_eps_{eps_key}.json").open("w", encoding="utf-8") as f:
+                    json.dump(detailed, f, ensure_ascii=False, indent=2)
+            # Epsilon plot per task
+            try:
+                viz.plot_epsilon_performance(rb, output_path=plots_dir / f"glue_{task}_epsilon.png")
+            except Exception:
+                pass
+            # Performance report per task
+            try:
+                trend = ra.analyze_performance_trends(rb)
+                with (reports_dir / f"glue_{task}_performance_report.json").open("w", encoding="utf-8") as f:
+                    json.dump({"task": task, "trend": trend}, f, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
+        # Macro summary
+        try:
+            with (reports_dir / "glue_macro_summary.json").open("w", encoding="utf-8") as f:
+                json.dump(results.get("summary", {}), f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    elif args.suite == "all":
+        # Save combined components
+        if results.get("winograd"):
+            with (run_dir / "winograd_results.json").open("w", encoding="utf-8") as f:
+                json.dump(results["winograd"], f, ensure_ascii=False, indent=2)
+            viz.plot_epsilon_performance(results["winograd"], output_path=plots_dir / "winograd_epsilon.png")
+            best_eps = results["winograd"].get("summary", {}).get("best_epsilon")
+            if best_eps is not None:
+                key = str(best_eps)
+                if key in results["winograd"].get("results_by_epsilon", {}):
+                    best_detailed = results["winograd"]["results_by_epsilon"][key]["detailed"]
+                    try:
+                        viz.plot_difficulty_analysis(best_detailed, output_path=plots_dir / "winograd_difficulty.png")
+                    except Exception:
+                        pass
+                    try:
+                        viz.plot_confidence_analysis(best_detailed, output_path=plots_dir / "winograd_confidence.png")
+                    except Exception:
+                        pass
+                    try:
+                        err_report = ea.generate_error_report(best_detailed, model_name=args.model, epsilon=float(best_eps))
+                        with (reports_dir / "winograd_error_report.json").open("w", encoding="utf-8") as f:
+                            json.dump(err_report, f, ensure_ascii=False, indent=2)
+                    except Exception:
+                        pass
+            try:
+                perf_report = ra.create_performance_report(results["winograd"], model_name=args.model)
+                with (reports_dir / "winograd_performance_report.json").open("w", encoding="utf-8") as f:
+                    json.dump(perf_report, f, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
+
+        if results.get("squad"):
+            with (run_dir / "squad_results.json").open("w", encoding="utf-8") as f:
+                json.dump(results["squad"], f, ensure_ascii=False, indent=2)
+            viz.plot_epsilon_performance(results["squad"], output_path=plots_dir / "squad_epsilon.png")
+            try:
+                perf_report = ra.create_performance_report(results["squad"], model_name=args.model)
+                with (reports_dir / "squad_performance_report.json").open("w", encoding="utf-8") as f:
+                    json.dump(perf_report, f, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
+
+        if results.get("glue"):
+            with (run_dir / "glue_results.json").open("w", encoding="utf-8") as f:
+                json.dump(results["glue"], f, ensure_ascii=False, indent=2)
+            per_task = results["glue"].get("per_task", {}) or {}
+            for task, task_data in per_task.items():
+                rb = task_data.get("results_by_epsilon", {})
+                # plots
+                try:
+                    viz.plot_epsilon_performance(rb, output_path=plots_dir / f"glue_{task}_epsilon.png")
+                except Exception:
+                    pass
+                # per-epsilon details
+                for eps_key, data in rb.items():
+                    detailed = data.get("detailed", [])
+                    with (run_dir / f"glue_{task}_detailed_eps_{eps_key}.json").open("w", encoding="utf-8") as f:
+                        json.dump(detailed, f, ensure_ascii=False, indent=2)
+                # report
+                try:
+                    trend = ra.analyze_performance_trends(rb)
+                    with (reports_dir / f"glue_{task}_performance_report.json").open("w", encoding="utf-8") as f:
+                        json.dump({"task": task, "trend": trend}, f, ensure_ascii=False, indent=2)
+                except Exception:
+                    pass
+            try:
+                with (reports_dir / "glue_macro_summary.json").open("w", encoding="utf-8") as f:
+                    json.dump(results["glue"].get("summary", {}), f, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
+
+    # Also write to the legacy flat output path if provided
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
 
-    print(f"Saved evaluation results to {out_path}")
+    print(f"Saved structured outputs to {run_dir}\nLegacy results JSON saved to {out_path}")
 
 
 if __name__ == "__main__":

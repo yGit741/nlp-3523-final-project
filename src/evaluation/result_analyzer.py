@@ -45,20 +45,38 @@ class ResultAnalyzer:
             mapping = results_by_epsilon
 
         eps = sorted([float(e) for e in mapping.keys()])
-        accs = np.array([mapping[str(e)]["metrics"]["accuracy"] if str(e) in mapping else mapping[e]["metrics"]["accuracy"] for e in eps])
+        # Choose primary metric key (prefer accuracy, then f1, then em)
+        sample_metrics = None
+        for v in mapping.values():
+            if isinstance(v, dict) and "metrics" in v:
+                sample_metrics = v["metrics"]
+                break
+        metric_key = None
+        if sample_metrics:
+            for k in ("accuracy", "f1", "em"):
+                if k in sample_metrics:
+                    metric_key = k
+                    break
+        metric_key = metric_key or (list(sample_metrics.keys())[0] if sample_metrics else "accuracy")
 
-        # Simple trend: correlation between epsilon and accuracy
-        corr = float(np.corrcoef(eps, accs)[0, 1]) if len(eps) > 1 else 0.0
-        best_idx = int(np.argmax(accs)) if len(accs) > 0 else -1
+        vals = np.array([
+            (mapping[str(e)]["metrics"].get(metric_key) if str(e) in mapping else mapping[e]["metrics"].get(metric_key))
+            for e in eps
+        ])
+
+        # Simple trend: correlation between epsilon and the chosen metric
+        corr = float(np.corrcoef(eps, vals)[0, 1]) if len(eps) > 1 else 0.0
+        best_idx = int(np.argmax(vals)) if len(vals) > 0 else -1
         best_eps = eps[best_idx] if best_idx >= 0 else None
-        best_acc = float(accs[best_idx]) if best_idx >= 0 else 0.0
+        best_val = float(vals[best_idx]) if best_idx >= 0 else 0.0
 
         return {
+            "metric": metric_key,
             "epsilon_values": eps,
-            "accuracies": accs.tolist(),
-            "correlation_epsilon_accuracy": corr,
+            "values": vals.tolist(),
+            "correlation_epsilon_metric": corr,
             "best_epsilon": best_eps,
-            "best_accuracy": best_acc,
+            "best_value": best_val,
         }
     
     def compare_model_performance(self, model_results: Dict[str, Dict]) -> Dict:
@@ -210,9 +228,10 @@ class ResultAnalyzer:
         """
         trend = self.analyze_performance_trends(results)
         return {
+            "metric": trend.get("metric"),
             "best_epsilon": trend.get("best_epsilon"),
-            "best_accuracy": trend.get("best_accuracy"),
-            "correlation_epsilon_accuracy": trend.get("correlation_epsilon_accuracy"),
+            "best_value": trend.get("best_value"),
+            "correlation_epsilon_metric": trend.get("correlation_epsilon_metric"),
         }
     
     def create_performance_report(self, results: Dict, 
