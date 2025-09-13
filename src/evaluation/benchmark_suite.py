@@ -182,7 +182,9 @@ class BenchmarkSuite:
     def run_winograd_benchmark(self, model_path: Union[str, Path], 
                               epsilon_values: List[float],
                               dataset_name: str = "winograd_dummy",
-                              seed: Optional[int] = None) -> Dict:
+                              seed: Optional[int] = None,
+                              schemas: Optional[List[Dict]] = None,
+                              device: Optional[str] = None) -> Dict:
         """
         Run Winograd Schema Challenge benchmark.
         
@@ -195,8 +197,9 @@ class BenchmarkSuite:
         Returns:
             Dict with results by epsilon and summary
         """
-        schemas = self._load_json_dataset(dataset_name)
-        evaluator = WinogradEvaluator(model_name=str(model_path))
+        if schemas is None:
+            schemas = self._load_json_dataset(dataset_name)
+        evaluator = WinogradEvaluator(model_name=str(model_path), device=device)
 
         results_by_epsilon: Dict[str, Dict] = {}
         for eps in epsilon_values:
@@ -236,7 +239,9 @@ class BenchmarkSuite:
                            epsilon_values: List[float],
                            dataset_name: str = "squad_dummy",
                            seed: Optional[int] = None,
-                           max_new_tokens: int = 32) -> Dict:
+                           max_new_tokens: int = 32,
+                           examples: Optional[List[Dict]] = None,
+                           device: Optional[str] = None) -> Dict:
         """
         Run SQuAD-style benchmark using generative answers.
 
@@ -251,18 +256,22 @@ class BenchmarkSuite:
             Dict with results by epsilon and summary
         """
         try:
-            examples = self._load_json_dataset(dataset_name)
-            chosen_dataset = dataset_name
+            if examples is None:
+                exs = self._load_json_dataset(dataset_name)
+                chosen_dataset = dataset_name
+            else:
+                exs = examples
+                chosen_dataset = dataset_name
         except FileNotFoundError:
             # Fallback to auto-created dummy dataset
             self._ensure_dummy_squad()
-            examples = self._load_json_dataset("squad_dummy")
+            exs = self._load_json_dataset("squad_dummy")
             chosen_dataset = "squad_dummy"
-        evaluator = SquadEvaluator(model_name=str(model_path))
+        evaluator = SquadEvaluator(model_name=str(model_path), device=device)
 
         results_by_epsilon: Dict[str, Dict] = {}
         for eps in epsilon_values:
-            detailed = evaluator.evaluate_all(examples, epsilon=eps, seed=seed, max_new_tokens=max_new_tokens)
+            detailed = evaluator.evaluate_all(exs, epsilon=eps, seed=seed, max_new_tokens=max_new_tokens)
             metrics = evaluator.get_performance_metrics(detailed)
             results_by_epsilon[str(eps)] = {
                 "metrics": metrics,
@@ -281,7 +290,7 @@ class BenchmarkSuite:
         summary = {
             "best_epsilon": best_eps,
             "best_f1": best_f1,
-            "num_samples": len(examples)
+            "num_samples": len(exs)
         }
 
         return {
@@ -298,7 +307,9 @@ class BenchmarkSuite:
                           tasks: List[str],
                           dataset_names: Optional[Dict[str, str]] = None,
                           epsilon_values: Optional[List[float]] = None,
-                          seed: Optional[int] = None) -> Dict:
+                          seed: Optional[int] = None,
+                          device: Optional[str] = None,
+                          hf_examples: Optional[Dict[str, List[Dict]]] = None) -> Dict:
         """
         Run GLUE-style benchmarks for selected tasks.
 
@@ -313,14 +324,18 @@ class BenchmarkSuite:
             Dict with per-task results and macro summary
         """
         epsilon_values = epsilon_values or [0.0]
-        evaluator = GlueEvaluator(model_name=str(model_path))
+        evaluator = GlueEvaluator(model_name=str(model_path), device=device)
 
         per_task_results: Dict[str, Dict] = {}
         for task in tasks:
             ds_name = dataset_names.get(task, task.lower()) if dataset_names else task.lower()
             try:
-                examples = self._load_json_dataset(ds_name)
-                chosen_ds = ds_name
+                if hf_examples and task in hf_examples:
+                    examples = hf_examples[task]
+                    chosen_ds = ds_name
+                else:
+                    examples = self._load_json_dataset(ds_name)
+                    chosen_ds = ds_name
             except FileNotFoundError:
                 # Fallback to default dummy for this task
                 self._ensure_dummy_glue()

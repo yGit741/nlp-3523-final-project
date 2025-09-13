@@ -2,24 +2,64 @@
 Evaluation CLI for Knowledge vs Reasoning Separation project.
 
 Usage examples:
-  - Winograd:
+  - Winograd (direct from Hugging Face, default: WinoGrande m validation):
       python -m src.evaluation.cli --suite winograd --model gpt2 \
-        --epsilons 0.0,0.1,0.3 --benchmark winograd_dummy \
-        --output results/winograd.json
+        --epsilons 0.0,0.1 --seed 42 \
+        --output results/winogrande_m_val.json
 
-  - SQuAD:
+    Customize the HF dataset/config/split (e.g., xs validation):
+      python -m src.evaluation.cli --suite winograd --model gpt2 \
+        --epsilons 0.0 --hf_winograd winogrande:xs:validation --seed 42 \
+        --output results/winogrande_xs_val.json
+
+    Use a local JSON dataset instead of HF (disable HF by passing an empty string):
+      python -m src.evaluation.cli --suite winograd --model gpt2 \
+        --epsilons 0.0,0.1 --hf_winograd "" \
+        --winograd_benchmark winograd_dummy \
+        --benchmark_dir path/to/benchmarks --output results/winograd_local.json
+
+  - SQuAD (direct from Hugging Face; default: squad:validation):
       python -m src.evaluation.cli --suite squad --model gpt2 \
-        --epsilons 0.0,0.2 --benchmark squad_dev --seed 42 \
-        --max_new_tokens 32 --output results/squad.json
+        --epsilons 0.0,0.2 --seed 42 --max_new_tokens 32 \
+        --output results/squad_val.json
 
-  - GLUE:
+    Customize dataset/split or use local JSON:
+      # Different split via HF
+      python -m src.evaluation.cli --suite squad --model gpt2 \
+        --hf_squad squad:validation --epsilons 0.0 --seed 42 \
+        --max_new_tokens 32 --output results/squad_val.json
+
+      # Disable HF and use local JSON
+      python -m src.evaluation.cli --suite squad --model gpt2 \
+        --hf_squad "" --squad_benchmark squad_dummy --epsilons 0.0 \
+        --max_new_tokens 32 --output results/squad_local.json
+
+  - GLUE (direct from Hugging Face; default tasks: SST-2, MRPC on validation):
       python -m src.evaluation.cli --suite glue --model gpt2 \
-        --glue_tasks SST-2,MRPC --glue_datasets SST-2:sst-2,MRPC:mrpc \
         --epsilons 0.0,0.1 --seed 42 --output results/glue.json
 
+    Customize tasks/splits or use local JSON:
+      # Different splits via HF
+      python -m src.evaluation.cli --suite glue --model gpt2 \
+        --hf_glue SST-2:validation,MRPC:validation --epsilons 0.0 \
+        --seed 42 --output results/glue_val.json
+
+      # Disable HF and use local JSON mappings
+      python -m src.evaluation.cli --suite glue --model gpt2 \
+        --hf_glue "" --glue_tasks SST-2,MRPC \
+        --glue_datasets SST-2:sst-2,MRPC:mrpc --epsilons 0.0 \
+        --seed 42 --output results/glue_local.json
+
   - All:
+      # Uses HF defaults: WinoGrande (m, val), SQuAD (validation), GLUE (SST-2 & MRPC, validation)
       python -m src.evaluation.cli --suite all --model gpt2 \
-        --epsilons 0.0,0.1 --seed 42 --output results/all.json
+        --epsilons 0.0,0.1 --seed 42 --max_new_tokens 32 \
+        --output results/all.json
+
+Notes:
+- --benchmark_dir optionally points to a custom datasets folder for local JSONs.
+- HF loaders: --hf_winograd <dataset:config:split>, --hf_squad <dataset:split>, --hf_glue <TASK:split,...>.
+- Pass an empty string (e.g., --hf_squad "") to disable HF for that suite and use local JSONs instead.
 """
 
 from .benchmark_suite import BenchmarkSuite
@@ -73,6 +113,12 @@ def main():
         help="SQuAD dataset name (without .json). Defaults to --benchmark",
     )
     parser.add_argument(
+        "--benchmark_dir",
+        type=str,
+        default="",
+        help="Optional path to datasets directory (overrides default benchmarks folder)",
+    )
+    parser.add_argument(
         "--output",
         type=str,
         default="results/eval_results.json",
@@ -91,6 +137,12 @@ def main():
         help="Random seed for masking (optional)",
     )
     parser.add_argument(
+        "--device",
+        type=str,
+        default="auto",
+        help="Device to use: 'cuda', 'mps', 'cpu', or 'auto' (prefers CUDA, then MPS).",
+    )
+    parser.add_argument(
         "--max_new_tokens",
         type=int,
         default=32,
@@ -103,6 +155,26 @@ def main():
         default="",
         help="Comma-separated GLUE task names (e.g., SST-2,MRPC)",
     )
+    # Direct-from-HF for SQuAD and GLUE
+    parser.add_argument(
+        "--hf_squad",
+        type=str,
+        default="squad:validation",
+        help="If set, format is '<dataset>:<split>' e.g., 'squad:validation'. Bypasses local JSON.",
+    )
+    # Direct-from-HF for Winograd (WinoGrande)
+    parser.add_argument(
+        "--hf_winograd",
+        type=str,
+        default="winogrande:xs:validation",
+        help="If set, format is '<dataset>:<config>:<split>' e.g., 'winogrande:m:validation'. Bypasses local JSON.",
+    )
+    parser.add_argument(
+        "--hf_glue",
+        type=str,
+        default="SST-2:validation,MRPC:validation",
+        help="If set, comma-separated '<TASK>:<split>' entries (e.g., 'SST-2:validation,MRPC:validation'). Bypasses local JSON.",
+    )
     parser.add_argument(
         "--glue_datasets",
         type=str,
@@ -113,20 +185,135 @@ def main():
     args = parser.parse_args()
     epsilon_values = [float(x.strip()) for x in args.epsilons.split(",") if x.strip()]
 
-    # Ensure benchmarks directory under this package (creates dummy if missing)
-    suite = BenchmarkSuite(benchmark_dir=Path(__file__).parent / "benchmarks")
+    # Ensure benchmarks directory
+    default_dir = Path(__file__).parent / "benchmarks"
+    bench_dir = Path(args.benchmark_dir) if args.benchmark_dir else default_dir
+    suite = BenchmarkSuite(benchmark_dir=bench_dir)
+
+    def _resolve_device(user_choice: str) -> str:
+        import torch
+        if user_choice and user_choice.lower() != "auto":
+            return user_choice
+        if torch.cuda.is_available():
+            return "cuda"
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return "mps"
+        return "cpu"
+    resolved_device = _resolve_device(args.device)
 
     # Dispatch by suite
     if args.suite == "winograd":
+        # Optional HF path for WinoGrande
+        schemas_mem = None
         winograd_ds = args.winograd_benchmark or args.benchmark
-        results = suite.run_winograd_benchmark(args.model, epsilon_values, dataset_name=winograd_ds, seed=args.seed)
+        if args.hf_winograd:
+            try:
+                from datasets import load_dataset
+                spec = args.hf_winograd
+                parts = spec.split(":")
+                if len(parts) != 3:
+                    raise SystemExit("--hf_winograd must be '<dataset>:<config>:<split>' e.g., 'winogrande:m:validation'")
+                ds_name, ds_config, ds_split = parts
+                # Normalize short configs like 'm' -> 'winogrande_m'
+                short_sizes = {"xs", "s", "m", "l", "xl", "debiased"}
+                ds_config_norm = f"winogrande_{ds_config}" if (ds_config in short_sizes and not ds_config.startswith("winogrande_")) else ds_config
+                hf_ds = load_dataset(ds_name, ds_config_norm, split=ds_split)
+                schemas_mem = []
+                for ex in hf_ds:
+                    # WinoGrande mapping
+                    options = [ex.get("option1"), ex.get("option2")]
+                    ans_index = int(ex.get("answer")) - 1 if isinstance(ex.get("answer"), (int, str)) else None
+                    answer_text = options[ans_index] if ans_index in (0, 1) else None
+                    schemas_mem.append({
+                        "id": ex.get("idx"),
+                        "text": ex.get("sentence"),
+                        "question": "Which option best completes the sentence?",
+                        "options": options,
+                        "answer": answer_text,
+                        "difficulty": None,
+                        "reasoning": "commonsense",
+                    })
+                winograd_ds = f"{ds_name}_{ds_config_norm}_{ds_split}"
+            except ImportError:
+                raise SystemExit("The 'datasets' package is required for --hf_winograd. Please install it.")
+        results = suite.run_winograd_benchmark(args.model, epsilon_values, dataset_name=winograd_ds, seed=args.seed, schemas=schemas_mem, device=resolved_device)
     elif args.suite == "squad":
+        # Optional HF path for SQuAD
         squad_ds = args.squad_benchmark or args.benchmark
-        results = suite.run_squad_benchmark(args.model, epsilon_values, dataset_name=squad_ds, seed=args.seed, max_new_tokens=args.max_new_tokens)
+        examples_mem = None
+        if args.hf_squad:
+            try:
+                from datasets import load_dataset
+                spec = args.hf_squad
+                parts = spec.split(":")
+                if len(parts) != 2:
+                    raise SystemExit("--hf_squad must be '<dataset>:<split>' e.g., 'squad:validation'")
+                ds_name, ds_split = parts
+                hf_ds = load_dataset(ds_name, split=ds_split)
+                examples_mem = []
+                for ex in hf_ds:
+                    examples_mem.append({
+                        "id": ex.get("id"),
+                        "context": ex.get("context"),
+                        "question": ex.get("question"),
+                        "answers": (ex.get("answers", {}) or {}).get("text", []),
+                    })
+                squad_ds = f"{ds_name}_{ds_split}"
+            except ImportError:
+                raise SystemExit("The 'datasets' package is required for --hf_squad. Please install it.")
+        results = suite.run_squad_benchmark(args.model, epsilon_values, dataset_name=squad_ds, seed=args.seed, max_new_tokens=args.max_new_tokens, examples=examples_mem, device=resolved_device)
     elif args.suite == "glue":
+        # Optional HF for GLUE
         tasks = [t.strip() for t in args.glue_tasks.split(",") if t.strip()]
+        hf_examples: dict = {}
+        if args.hf_glue:
+            try:
+                from datasets import load_dataset
+                specs = [s.strip() for s in args.hf_glue.split(",") if s.strip()]
+                for spec in specs:
+                    if ":" not in spec:
+                        raise SystemExit("Each --hf_glue entry must be '<TASK>:<split>'")
+                    task_name, split_name = spec.split(":", 1)
+                    cfg = task_name.lower().replace("-", "")
+                    hf_ds = load_dataset("glue", cfg, split=split_name)
+                    rows = []
+                    for ex in hf_ds:
+                        if task_name in ("SST-2","CoLA"):
+                            # label names may exist in features
+                            names = getattr(hf_ds.features["label"], "names", None)
+                            if task_name == "SST-2":
+                                label = names[ex["label"]] if names else ("positive" if ex["label"] == 1 else "negative")
+                                rows.append({"id": ex.get("idx"), "sentence": ex.get("sentence"), "label": label})
+                            else:
+                                label = names[ex["label"]] if names else ("acceptable" if ex["label"] == 1 else "unacceptable")
+                                rows.append({"id": ex.get("idx"), "sentence": ex.get("sentence"), "label": label})
+                        elif task_name in ("MRPC","QQP"):
+                            names = getattr(hf_ds.features["label"], "names", None)
+                            label = names[ex["label"]] if names else ("paraphrase" if ex["label"] == 1 else "not paraphrase")
+                            s1 = ex.get("sentence1") or ex.get("question1")
+                            s2 = ex.get("sentence2") or ex.get("question2")
+                            rows.append({"id": ex.get("idx"), "sentence1": s1, "sentence2": s2, "label": label})
+                        elif task_name in ("RTE","QNLI"):
+                            names = getattr(hf_ds.features["label"], "names", None)
+                            raw = names[ex["label"]] if names else ("entailment" if ex["label"] == 0 else "not_entailment")
+                            label = raw.replace("_", " ")
+                            prem = ex.get("sentence1") or ex.get("sentence")
+                            hyp = ex.get("sentence2") or ex.get("question")
+                            rows.append({"id": ex.get("idx"), "premise": prem, "hypothesis": hyp, "label": label})
+                        elif task_name == "MNLI":
+                            names = getattr(hf_ds.features["label"], "names", None)
+                            label = names[ex["label"]] if names else ["entailment","neutral","contradiction"][ex["label"]]
+                            rows.append({"id": ex.get("idx"), "premise": ex.get("premise"), "hypothesis": ex.get("hypothesis"), "label": label})
+                        else:
+                            raise SystemExit(f"Unsupported GLUE task in --hf_glue: {task_name}")
+                    hf_examples[task_name] = rows
+                # If HF provided but --glue_tasks empty, infer from specs
+                if not tasks:
+                    tasks = list(hf_examples.keys())
+            except ImportError:
+                raise SystemExit("The 'datasets' package is required for --hf_glue. Please install it.")
         if not tasks:
-            raise SystemExit("--glue_tasks is required when --suite glue")
+            raise SystemExit("--glue_tasks is required when --suite glue (or provide --hf_glue)")
         mapping: dict = {}
         if args.glue_datasets:
             for pair in args.glue_datasets.split(","):
@@ -136,18 +323,113 @@ def main():
                     raise SystemExit(f"Invalid --glue_datasets entry: {pair}")
                 task_name, ds_name = pair.split(":", 1)
                 mapping[task_name.strip()] = ds_name.strip()
-        results = suite.run_glue_benchmark(args.model, tasks, dataset_names=mapping or None, epsilon_values=epsilon_values, seed=args.seed)
+        results = suite.run_glue_benchmark(args.model, tasks, dataset_names=mapping or None, epsilon_values=epsilon_values, seed=args.seed, device=resolved_device, hf_examples=hf_examples or None)
     elif args.suite == "all":
         # Winograd
         winograd_ds = args.winograd_benchmark or args.benchmark
-        winograd_res = suite.run_winograd_benchmark(args.model, epsilon_values, dataset_name=winograd_ds, seed=args.seed)
+        schemas_mem = None
+        if args.hf_winograd:
+            try:
+                from datasets import load_dataset
+                spec = args.hf_winograd
+                parts = spec.split(":")
+                if len(parts) != 3:
+                    raise SystemExit("--hf_winograd must be '<dataset>:<config>:<split>' e.g., 'winogrande:m:validation'")
+                ds_name, ds_config, ds_split = parts
+                short_sizes = {"xs", "s", "m", "l", "xl", "debiased"}
+                ds_config_norm = f"winogrande_{ds_config}" if (ds_config in short_sizes and not ds_config.startswith("winogrande_")) else ds_config
+                hf_ds = load_dataset(ds_name, ds_config_norm, split=ds_split)
+                schemas_mem = []
+                for ex in hf_ds:
+                    options = [ex.get("option1"), ex.get("option2")]
+                    ans_index = int(ex.get("answer")) - 1 if isinstance(ex.get("answer"), (int, str)) else None
+                    answer_text = options[ans_index] if ans_index in (0, 1) else None
+                    schemas_mem.append({
+                        "id": ex.get("idx"),
+                        "text": ex.get("sentence"),
+                        "question": "Which option best completes the sentence?",
+                        "options": options,
+                        "answer": answer_text,
+                        "difficulty": None,
+                        "reasoning": "commonsense",
+                    })
+                winograd_ds = f"{ds_name}_{ds_config_norm}_{ds_split}"
+            except ImportError:
+                raise SystemExit("The 'datasets' package is required for --hf_winograd. Please install it.")
+        winograd_res = suite.run_winograd_benchmark(args.model, epsilon_values, dataset_name=winograd_ds, seed=args.seed, schemas=schemas_mem, device=resolved_device)
 
         # SQuAD
         squad_ds = args.squad_benchmark or args.benchmark
-        squad_res = suite.run_squad_benchmark(args.model, epsilon_values, dataset_name=squad_ds, seed=args.seed, max_new_tokens=args.max_new_tokens)
+        examples_mem = None
+        if args.hf_squad:
+            try:
+                from datasets import load_dataset
+                spec = args.hf_squad
+                parts = spec.split(":")
+                if len(parts) != 2:
+                    raise SystemExit("--hf_squad must be '<dataset>:<split>' e.g., 'squad:validation'")
+                ds_name, ds_split = parts
+                hf_ds = load_dataset(ds_name, split=ds_split)
+                examples_mem = []
+                for ex in hf_ds:
+                    examples_mem.append({
+                        "id": ex.get("id"),
+                        "context": ex.get("context"),
+                        "question": ex.get("question"),
+                        "answers": (ex.get("answers", {}) or {}).get("text", []),
+                    })
+                squad_ds = f"{ds_name}_{ds_split}"
+            except ImportError:
+                raise SystemExit("The 'datasets' package is required for --hf_squad. Please install it.")
+        squad_res = suite.run_squad_benchmark(args.model, epsilon_values, dataset_name=squad_ds, seed=args.seed, max_new_tokens=args.max_new_tokens, examples=examples_mem, device=resolved_device)
 
         # GLUE
         tasks = [t.strip() for t in args.glue_tasks.split(",") if t.strip()]
+        hf_examples: dict = {}
+        if args.hf_glue:
+            try:
+                from datasets import load_dataset
+                specs = [s.strip() for s in args.hf_glue.split(",") if s.strip()]
+                for spec in specs:
+                    if ":" not in spec:
+                        raise SystemExit("Each --hf_glue entry must be '<TASK>:<split>'")
+                    task_name, split_name = spec.split(":", 1)
+                    cfg = task_name.lower().replace("-", "")
+                    hf_ds = load_dataset("glue", cfg, split=split_name)
+                    rows = []
+                    for ex in hf_ds:
+                        if task_name in ("SST-2","CoLA"):
+                            names = getattr(hf_ds.features["label"], "names", None)
+                            if task_name == "SST-2":
+                                label = names[ex["label"]] if names else ("positive" if ex["label"] == 1 else "negative")
+                                rows.append({"id": ex.get("idx"), "sentence": ex.get("sentence"), "label": label})
+                            else:
+                                label = names[ex["label"]] if names else ("acceptable" if ex["label"] == 1 else "unacceptable")
+                                rows.append({"id": ex.get("idx"), "sentence": ex.get("sentence"), "label": label})
+                        elif task_name in ("MRPC","QQP"):
+                            names = getattr(hf_ds.features["label"], "names", None)
+                            label = names[ex["label"]] if names else ("paraphrase" if ex["label"] == 1 else "not paraphrase")
+                            s1 = ex.get("sentence1") or ex.get("question1")
+                            s2 = ex.get("sentence2") or ex.get("question2")
+                            rows.append({"id": ex.get("idx"), "sentence1": s1, "sentence2": s2, "label": label})
+                        elif task_name in ("RTE","QNLI"):
+                            names = getattr(hf_ds.features["label"], "names", None)
+                            raw = names[ex["label"]] if names else ("entailment" if ex["label"] == 0 else "not_entailment")
+                            label = raw.replace("_", " ")
+                            prem = ex.get("sentence1") or ex.get("sentence")
+                            hyp = ex.get("sentence2") or ex.get("question")
+                            rows.append({"id": ex.get("idx"), "premise": prem, "hypothesis": hyp, "label": label})
+                        elif task_name == "MNLI":
+                            names = getattr(hf_ds.features["label"], "names", None)
+                            label = names[ex["label"]] if names else ["entailment","neutral","contradiction"][ex["label"]]
+                            rows.append({"id": ex.get("idx"), "premise": ex.get("premise"), "hypothesis": ex.get("hypothesis"), "label": label})
+                        else:
+                            raise SystemExit(f"Unsupported GLUE task in --hf_glue: {task_name}")
+                    hf_examples[task_name] = rows
+                if not tasks:
+                    tasks = list(hf_examples.keys())
+            except ImportError:
+                raise SystemExit("The 'datasets' package is required for --hf_glue. Please install it.")
         mapping: dict = {}
         if args.glue_datasets:
             for pair in args.glue_datasets.split(","):
@@ -159,7 +441,7 @@ def main():
                 mapping[task_name.strip()] = ds_name.strip()
         glue_res = None
         if tasks:
-            glue_res = suite.run_glue_benchmark(args.model, tasks, dataset_names=mapping or None, epsilon_values=epsilon_values, seed=args.seed)
+            glue_res = suite.run_glue_benchmark(args.model, tasks, dataset_names=mapping or None, epsilon_values=epsilon_values, seed=args.seed, device=resolved_device, hf_examples=hf_examples or None)
 
         results = {
             "winograd": winograd_res,
