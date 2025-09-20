@@ -48,3 +48,6 @@ checkpoints/
 # --- Data (keep folder, ignore contents) ---
 data/*
 !data/.gitkeep
+
+.env
+/secrets
