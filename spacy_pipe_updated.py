@@ -152,33 +152,7 @@ class SpacyJSONGenerator:
         
         return results
     
-    def process_texts_batch(self, texts: List[str], 
-                           base_ids: List[str] = None,
-                           meta_list: List[Dict[str, str]] = None) -> List[List[Dict[str, Any]]]:
-        """Process a batch of texts, splitting each into sentences."""
-        if base_ids is None:
-            base_ids = [f"doc_{i:07d}" for i in range(len(texts))]
-        
-        if meta_list is None:
-            meta_list = [{"source": "custom", "license": "CC-BY-SA"}] * len(texts)
-        
-        # Process all texts in batch
-        docs = list(self.nlp.pipe(texts, batch_size=self.batch_size, n_process=self.n_process))
-        
-        # Extract sentences and process
-        all_results = []
-        for doc, base_id, meta in zip(docs, base_ids, meta_list):
-            text_results = []
-            for i, sent in enumerate(doc.sents):
-                sentence_id = f"{base_id}_{i:07d}"
-                # Create a new doc for just this sentence for processing
-                sent_doc = self.nlp(sent.text)
-                result = self.process_single_doc(sent_doc, sent.text, sentence_id)
-                text_results.append(result)
-            all_results.append(text_results)
-        
-        return all_results
-    
+   
     def process_sentences_streaming(self, sentences: Iterator[str],
                                    sentence_id_generator: Iterator[str] = None) -> Iterator[Dict[str, Any]]:
         """Process sentences in streaming fashion with batching."""
@@ -222,69 +196,20 @@ class SpacyJSONGenerator:
         Returns:
             BaseSaveDriver: The save driver instance with statistics
         """
-        import time
-        import psutil
-        import os
-        
-        # Initialize timing and performance tracking
-        total_start_time = time.time()
-        timing_stats = {
-            'hf_map_time': 0,
-            'spacy_processing_time': 0,
-            'save_operations_time': 0,
-            'iteration_time': 0,
-            'total_documents': 0,
-            'total_batches_processed': 0,
-            'memory_usage': []
-        }
         
         print(f"🚀 Starting HF map() optimized processing with {save_driver.__class__.__name__}...")
-        print(f"📊 Initial memory usage: {psutil.Process(os.getpid()).memory_info().rss / 1024 / 1024:.1f} MB")
-        
+                
         def process_batch_texts(batch):
             """Process a batch of texts with spaCy using HF map."""
-            batch_start = time.time()
             
-            # Text filtering
-            filter_start = time.time()
             texts = [text for text in batch['text'] if len(text) >= 10]
-            filter_time = time.time() - filter_start
             
             if not texts:
                 return {'processed': [None] * len(batch['text'])}
             
             try:
-                # Process batch with spaCy
-                spacy_start = time.time()
                 processed_docs = self.process_sentences_batch(texts)
-                spacy_time = time.time() - spacy_start
-                
-                # Pad with None for filtered texts
-                padding_start = time.time()
-                result = []
-                text_idx = 0
-                for text in batch['text']:
-                    if len(text) >= 10:
-                        result.append(processed_docs[text_idx])
-                        text_idx += 1
-                    else:
-                        result.append(None)
-                padding_time = time.time() - padding_start
-                
-                batch_total_time = time.time() - batch_start
-                
-                # Log batch processing details (every 10th batch to avoid spam)
-                if hasattr(process_batch_texts, 'batch_count'):
-                    process_batch_texts.batch_count += 1
-                else:
-                    process_batch_texts.batch_count = 1
-                
-                if process_batch_texts.batch_count % 10 == 0:
-                    print(f"  📦 Batch {process_batch_texts.batch_count}: {len(texts)} texts processed in {batch_total_time:.3f}s")
-                    print(f"    - Filtering: {filter_time:.3f}s, SpaCy: {spacy_time:.3f}s, Padding: {padding_time:.3f}s")
-                    print(f"    - Rate: {len(texts)/batch_total_time:.1f} texts/sec")
-                
-                return {'processed': result}
+                return {'processed': processed_docs}
             except Exception as e:
                 print(f"❌ Error processing batch: {e}")
                 return {'processed': [None] * len(batch['text'])}
@@ -301,94 +226,41 @@ class SpacyJSONGenerator:
         )
         
         hf_map_time = time.time() - hf_map_start
-        timing_stats['hf_map_time'] = hf_map_time
         print(f"✅ HF map() setup completed in {hf_map_time:.3f}s")
         
         # Process and save data using the provided save driver
         print("💾 Processing and saving data...")
-        iteration_start = time.time()
+        
         processed_count = 0
-        last_progress_time = time.time()
         
         for example in processed_dataset:
-            doc_start = time.time()
-            
-            # Add document to save driver (handles memory management)
-            save_start = time.time()
-            save_driver.add_document(example['processed'])
-            save_time = time.time() - save_start
-            timing_stats['save_operations_time'] += save_time
-            
+            save_driver.add_document(example['processed'])            
             processed_count += 1
-            timing_stats['total_documents'] = processed_count
-            
             # Check batch count more frequently to respect num_batches limit
             current_batch_count = save_driver.batch_count
-            timing_stats['total_batches_processed'] = current_batch_count
-            
-            # Progress update every 1000 documents with detailed timing
-            if processed_count % 1000 == 0:
-                current_time = time.time()
-                elapsed_since_last = current_time - last_progress_time
-                docs_per_sec = 1000 / elapsed_since_last
-                
-                stats = save_driver.get_statistics()
-                memory_mb = psutil.Process(os.getpid()).memory_info().rss / 1024 / 1024
-                timing_stats['memory_usage'].append(memory_mb)
-                
-                print(f"📈 Progress: {processed_count} documents processed, {stats['batches_created']} batches saved")
-                print(f"   ⏱️  Rate: {docs_per_sec:.1f} docs/sec, Memory: {memory_mb:.1f} MB")
-                print(f"   💾 Save operations: {timing_stats['save_operations_time']:.3f}s total")
-                
-                last_progress_time = current_time
             
             # Check if we've processed enough batches (check after each document)
             if num_batches is not None and current_batch_count >= num_batches:
                 print(f"🛑 Reached target of {num_batches} batches. Stopping...")
                 break
             
-            doc_time = time.time() - doc_start
-            timing_stats['iteration_time'] += doc_time
-        
-        iteration_time = time.time() - iteration_start
-        timing_stats['iteration_time'] = iteration_time
         
         # Finalize and get statistics
-        finalize_start = time.time()
         batch_count, documents_processed = save_driver.finalize()
-        finalize_time = time.time() - finalize_start
-        timing_stats['save_operations_time'] += finalize_time
         
         # Calculate total time and performance metrics
-        total_time = time.time() - total_start_time
         
         print(f"\n🎉 Processing completed!")
         print(f"📊 Performance Summary:")
-        print(f"   ⏱️  Total time: {total_time:.2f}s")
         print(f"   📄 Documents processed: {documents_processed}")
         print(f"   📦 Batches created: {batch_count}")
-        print(f"   🚀 Overall rate: {documents_processed/total_time:.1f} docs/sec")
         
-        print(f"\n🔍 Detailed Timing Breakdown:")
-        print(f"   🔄 HF map() setup: {timing_stats['hf_map_time']:.3f}s ({timing_stats['hf_map_time']/total_time*100:.1f}%)")
-        print(f"   💾 Save operations: {timing_stats['save_operations_time']:.3f}s ({timing_stats['save_operations_time']/total_time*100:.1f}%)")
-        print(f"   🔁 Iteration overhead: {timing_stats['iteration_time']:.3f}s ({timing_stats['iteration_time']/total_time*100:.1f}%)")
         
-        if timing_stats['memory_usage']:
-            print(f"\n💾 Memory Usage:")
-            print(f"   📈 Peak memory: {max(timing_stats['memory_usage']):.1f} MB")
-            print(f"   📉 Average memory: {sum(timing_stats['memory_usage'])/len(timing_stats['memory_usage']):.1f} MB")
+        
         
         # Bottleneck analysis
-        print(f"\n🔍 Bottleneck Analysis:")
-        if timing_stats['save_operations_time'] / total_time > 0.3:
-            print(f"   ⚠️  Save operations are the bottleneck ({timing_stats['save_operations_time']/total_time*100:.1f}% of time)")
-            print(f"      💡 Consider increasing LocalSaveDriver.batch_size to reduce I/O frequency")
-        elif timing_stats['iteration_time'] / total_time > 0.2:
-            print(f"   ⚠️  Iteration overhead is significant ({timing_stats['iteration_time']/total_time*100:.1f}% of time)")
-            print(f"      💡 Consider processing larger batches or optimizing the loop")
-        else:
-            print(f"   ✅ No major bottlenecks detected - processing is well balanced")
+        
+        
         
         return save_driver
 

@@ -2,7 +2,8 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 import time
 import json
-
+import tempfile
+import os
 class BaseSaveDriver(ABC):
     """
     Abstract base class for save drivers.
@@ -185,8 +186,8 @@ class CloudSaveDriver(BaseSaveDriver):
         try:
             from google.cloud import storage
             from google.cloud.exceptions import GoogleCloudError
-            import json
-            import tempfile
+            
+            
             from config import Config
         except ImportError as e:
             raise ImportError(f"GCS dependencies not installed. Run: pip install google-cloud-storage. Error: {e}")
@@ -194,10 +195,6 @@ class CloudSaveDriver(BaseSaveDriver):
         # Store imports for use in methods
         self.storage = storage
         self.GoogleCloudError = GoogleCloudError
-        self.json = json
-        self.tempfile = tempfile
-        
-        
         self.config = Config 
         
         # Validate and get GCS configuration
@@ -238,7 +235,6 @@ class CloudSaveDriver(BaseSaveDriver):
         print(f"  - Bucket: {self.bucket_name}")
         print(f"  - Project: {self.project_id}")
         print(f"  - Batch size: {self.batch_size}")
-        print(f"  - Upload chunk size: {self.config.GCS_UPLOAD_CHUNK_SIZE / 1024 / 1024:.1f} MB")
     
     def add_document(self, document):
         """
@@ -271,36 +267,32 @@ class CloudSaveDriver(BaseSaveDriver):
         
         try:
             # Create temporary file for JSON data
-            with self.tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as temp_file:
-                self.json.dump(self.current_batch, temp_file, indent=2, ensure_ascii=False)
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as temp_file:
+                json.dump(self.current_batch, temp_file, ensure_ascii=False)
                 temp_file_path = temp_file.name
             
-            # Upload to GCS
             blob = self.bucket.blob(filename)
             
-            # Configure upload settings for large files
-            # blob.chunk_size = self.config.GCS_UPLOAD_CHUNK_SIZE # default is 100MB
-            
-            # Upload with retry logic
             for attempt in range(self.config.GCS_RETRY_ATTEMPTS):
                 try:
-                    blob.upload_from_filename(
-                        temp_file_path,
-                        timeout=self.config.GCS_TIMEOUT
-                    )
+                    blob.upload_from_filename(temp_file_path, content_type='application/json')
+                    
                     break
                 except self.GoogleCloudError as e:
                     if attempt == self.config.GCS_RETRY_ATTEMPTS - 1:
                         raise
                     print(f"⚠️  Upload attempt {attempt + 1} failed, retrying... Error: {e}")
                     time.sleep(2 ** attempt)  # Exponential backoff
+
+                # Configure upload settings for large files
+                # blob.chunk_size = self.config.GCS_UPLOAD_CHUNK_SIZE # default is 100MB
+                
+                # Upload with retry logic            
             
-            # Clean up temporary file
-            import os
-            os.unlink(temp_file_path)
+            os.unlink(temp_file_path)  # Clean up
             
             save_time = time.time() - save_start
-            file_size_mb = len(self.json.dumps(self.current_batch)) / 1024 / 1024
+            file_size_mb = len(json.dumps(self.current_batch)) / 1024 / 1024
             
             print(f"☁️  Saved batch {self.batch_count} with {len(self.current_batch)} documents to gs://{self.bucket_name}/{filename}")
             print(f"   ⏱️  Upload time: {save_time:.3f}s, Size: {file_size_mb:.1f} MB, Rate: {len(self.current_batch)/save_time:.1f} docs/sec")
@@ -379,12 +371,12 @@ class CloudSaveDriver(BaseSaveDriver):
                 blob = self.bucket.blob(blob)
             
             # Download to temporary file
-            with self.tempfile.NamedTemporaryFile(mode='w+', suffix='.json', delete=False) as temp_file:
+            with tempfile.NamedTemporaryFile(mode='w+', suffix='.json', delete=False) as temp_file:
                 blob.download_to_filename(temp_file.name)
                 
                 # Load JSON data
                 with open(temp_file.name, 'r', encoding='utf-8') as f:
-                    data = self.json.load(f)
+                    data = json.load(f)
                 
                 # Clean up
                 import os
