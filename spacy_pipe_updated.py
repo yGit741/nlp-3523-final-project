@@ -1,9 +1,7 @@
 import spacy
-import json
 import re
 import time
 from typing import List, Dict, Any, Iterator, Union
-from collections import defaultdict
 import uuid
 from pathlib import Path
 from Drivers import BaseSaveDriver
@@ -21,7 +19,7 @@ class SpacyJSONGenerator:
         # Load the transformer model
         if require_gpu:
             spacy.require_gpu() 
-        self.nlp = spacy.load("en_core_web_trf", disable=[ "attribute_ruler", "lemmatizer", "transformer"])
+        self.nlp = spacy.load("en_core_web_trf", disable=[ "lemmatizer"])
         self.batch_size = batch_size
         self.n_process = n_process
         
@@ -90,15 +88,14 @@ class SpacyJSONGenerator:
         
         # Extract named entity spans with entity IDs
         ner_spans = []
-        entity_counter = 1
+        
         for ent in doc.ents:
             ner_spans.append({
-                "entity_id": f"e{entity_counter:04d}",
+                "entity_id": f"{ent.label_}-{str(ent).upper().replace(' ', '_').replace('-', '_')}",
                 "start": ent.start_char,
                 "end": ent.end_char,
                 "label": ent.label_
             })
-            entity_counter += 1
         
         # Extract POS tokens and tags
         pos_tokens = []
@@ -183,7 +180,7 @@ class SpacyJSONGenerator:
             for result in results:
                 yield result
 
-    def process_and_save(self, dataset, save_driver: BaseSaveDriver, num_batches=None):
+    def process_and_save(self, dataset, save_driver: BaseSaveDriver, num_batches=None, resume_from_progress=True):
         """
         Process dataset using Hugging Face map() function with configurable save driver.
         Includes detailed timing measurements and bottleneck analysis.
@@ -192,12 +189,26 @@ class SpacyJSONGenerator:
             dataset: Hugging Face dataset
             save_driver: SaveDriver instance for handling storage (local, cloud, etc.)
             num_batches: Number of batches to process (None = process all)
+            resume_from_progress: Whether to resume from existing progress (if available)
         
         Returns:
             BaseSaveDriver: The save driver instance with statistics
         """
         
         print(f"🚀 Starting HF map() optimized processing with {save_driver.__class__.__name__}...")
+        
+        # Check if we should resume from existing progress
+        documents_to_skip = 0
+        initial_batch_count = 0
+        if resume_from_progress and hasattr(save_driver, 'progress_data'):
+            progress = save_driver.progress_data
+            if progress['documents_processed'] > 0:
+                documents_to_skip = progress['documents_processed']
+                initial_batch_count = progress['batch_count']
+                print(f"🔄 Resuming from previous progress:")
+                print(f"   📄 Documents already processed: {progress['documents_processed']}")
+                print(f"   📦 Batches already created: {progress['batch_count']}")
+                print(f"⏭️  Skipping first {documents_to_skip} documents...")
                 
         def process_batch_texts(batch):
             """Process a batch of texts with spaCy using HF map."""
@@ -232,17 +243,41 @@ class SpacyJSONGenerator:
         print("💾 Processing and saving data...")
         
         processed_count = 0
+        skipped_count = 0
         
-        for example in processed_dataset:
-            save_driver.add_document(example['processed'])            
-            processed_count += 1
-            # Check batch count more frequently to respect num_batches limit
-            current_batch_count = save_driver.batch_count
-            
-            # Check if we've processed enough batches (check after each document)
-            if num_batches is not None and current_batch_count >= num_batches:
-                print(f"🛑 Reached target of {num_batches} batches. Stopping...")
-                break
+        try:
+            for example in processed_dataset:
+                # Skip already processed documents
+                if skipped_count < documents_to_skip:
+                    skipped_count += 1
+                    continue
+                
+                save_driver.add_document(example['processed'])            
+                processed_count += 1
+                
+                # Check batch count more frequently to respect num_batches limit
+                current_batch_count = save_driver.batch_count
+                new_batches_created = current_batch_count - initial_batch_count
+                
+                # Check if we've processed enough NEW batches (check after each document)
+                if num_batches is not None and new_batches_created >= num_batches:
+                    print(f"🛑 Reached target of {num_batches} new batches. Stopping...")
+                    print(f"   📊 Total batches: {current_batch_count}, New batches this run: {new_batches_created}")
+                    break
+                
+                
+                
+        except KeyboardInterrupt:
+            print("\n⚠️  Processing interrupted by user. Progress saved.")
+            if hasattr(save_driver, '_save_progress'):
+                save_driver._save_progress()
+            raise
+        except Exception as e:
+            print(f"\n❌ Processing failed: {e}")
+            print("💾 Progress saved. You can resume later.")
+            if hasattr(save_driver, '_save_progress'):
+                save_driver._save_progress()
+            raise
             
         
         # Finalize and get statistics

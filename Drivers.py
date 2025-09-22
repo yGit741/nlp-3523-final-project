@@ -171,22 +171,25 @@ class CloudSaveDriver(BaseSaveDriver):
     Google Cloud Storage (GCS) implementation for saving processed batches.
     """
     
-    def __init__(self, bucket_name=None, batch_size=100):
+    def __init__(self, bucket_name=None, batch_size=100, progress_file="gcs_processing_progress.json"):
         """
         Initialize the CloudSaveDriver with GCS support.
         
         Args:
             bucket_name: GCS bucket name (optional, can be set in config)
             batch_size: Number of documents per batch file
-            config: Config instance with GCS settings
+            progress_file: File to store processing progress for resumption
         """
         super().__init__(batch_size)
+        self.progress_file = progress_file
+        self.progress_data = self._load_progress()
         
         # Import here to avoid dependency issues if GCS not installed
         try:
             from google.cloud import storage
             from google.cloud.exceptions import GoogleCloudError
             
+            import os
             
             from config import Config
         except ImportError as e:
@@ -235,6 +238,44 @@ class CloudSaveDriver(BaseSaveDriver):
         print(f"  - Bucket: {self.bucket_name}")
         print(f"  - Project: {self.project_id}")
         print(f"  - Batch size: {self.batch_size}")
+        
+        # Restore state from progress file
+        if self.progress_data['documents_processed'] > 0:
+            self.documents_processed = self.progress_data['documents_processed']
+            self.batch_count = self.progress_data['batch_count']
+            print(f"  - Resuming from: {self.documents_processed} docs, {self.batch_count} batches")
+    
+    def _load_progress(self):
+        """Load existing progress if available."""
+        if os.path.exists(self.progress_file):
+            try:
+                with open(self.progress_file, 'r') as f:
+                    progress = json.load(f)
+                    print(f"📋 Loaded existing progress: {progress['documents_processed']} docs, {progress['batch_count']} batches")
+                    return progress
+            except Exception as e:
+                print(f"⚠️  Could not load progress file: {e}")
+        
+        return {
+            'documents_processed': 0,
+            'batch_count': 0,
+            'last_processed_batch': None,
+            'start_time': time.time()
+        }
+    
+    def _save_progress(self):
+        """Save current progress to file."""
+        self.progress_data.update({
+            'documents_processed': self.documents_processed,
+            'batch_count': self.batch_count,
+            'last_save_time': time.time()
+        })
+        
+        try:
+            with open(self.progress_file, 'w') as f:
+                json.dump(self.progress_data, f, indent=2)
+        except Exception as e:
+            print(f"⚠️  Could not save progress: {e}")
     
     def add_document(self, document):
         """
@@ -302,11 +343,13 @@ class CloudSaveDriver(BaseSaveDriver):
             # Clean up temp file if it exists
             try:
                 if 'temp_file_path' in locals():
-                    import os
                     os.unlink(temp_file_path)
             except:
                 pass
             raise
+        
+        # Save progress after each batch
+        self._save_progress()
         
         # Clear current batch to free memory
         self.current_batch = []
@@ -328,6 +371,11 @@ class CloudSaveDriver(BaseSaveDriver):
         print(f"  - Total batches: {self.batch_count}")
         print(f"  - Total documents: {self.documents_processed}")
         print(f"  - Bucket: gs://{self.bucket_name}")
+        
+        # Clean up progress file on successful completion
+        # if os.path.exists(self.progress_file):
+        #     os.remove(self.progress_file)
+        #     print("🧹 Cleaned up progress file")
         
         return self.batch_count, self.documents_processed
     
