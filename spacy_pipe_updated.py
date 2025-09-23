@@ -5,6 +5,7 @@ from typing import List, Dict, Any, Iterator, Union
 import uuid
 from pathlib import Path
 from Drivers import BaseSaveDriver
+from spacy.pipeline import EntityRuler
 
 
 class SpacyJSONGenerator:
@@ -19,10 +20,40 @@ class SpacyJSONGenerator:
         # Load the transformer model
         if require_gpu:
             spacy.require_gpu() 
-        self.nlp = spacy.load("en_core_web_trf", disable=[ "lemmatizer"])
+        self.nlp = spacy.load("en_core_web_trf", disable=["lemmatizer"])
         self.batch_size = batch_size
         self.n_process = n_process
         
+        # Add EntityRuler for NLE extraction (BEFORE NER for better integration)
+        ruler = self.nlp.add_pipe("entity_ruler", before="ner")
+        self._setup_nle_patterns(ruler)
+    
+    def _setup_nle_patterns(self, ruler: EntityRuler):
+        """Setup patterns for Nonlinguistic Entity extraction using EntityRuler."""
+        patterns = [
+            # Phone patterns
+            {"label": "PHONE", "pattern": [{"TEXT": {"REGEX": r"\(?[0-9]{3}\)?[-.\s]?[0-9]{3}[-.\s]?[0-9]{4}"}}]},
+            {"label": "PHONE", "pattern": [{"TEXT": {"REGEX": r"\+[1-9]\d{1,14}"}}]},
+            
+            # Address patterns
+            {"label": "ADDRESS", "pattern": [{"IS_DIGIT": True}, {"IS_ALPHA": True, "OP": "+"}, {"LOWER": {"IN": ["st", "street", "ave", "avenue", "rd", "road", "blvd", "boulevard", "dr", "drive", "ln", "lane", "ct", "court", "pl", "place"]}}]},
+            {"label": "ADDRESS", "pattern": [{"LOWER": "p"}, {"TEXT": "."}, {"LOWER": "o"}, {"TEXT": "."}, {"LOWER": "box"}, {"IS_DIGIT": True}]},
+            
+            # IP Address patterns
+            {"label": "IP_ADDRESS", "pattern": [{"TEXT": {"REGEX": r"\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b"}}]},
+            {"label": "IP_ADDRESS", "pattern": [{"TEXT": {"REGEX": r"\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b"}}]},
+            
+            # SSN patterns
+            {"label": "SSN", "pattern": [{"IS_DIGIT": True, "LENGTH": 3}, {"TEXT": "-"}, {"IS_DIGIT": True, "LENGTH": 2}, {"TEXT": "-"}, {"IS_DIGIT": True, "LENGTH": 4}]},
+            {"label": "SSN", "pattern": [{"IS_DIGIT": True, "LENGTH": 3}, {"IS_SPACE": True}, {"IS_DIGIT": True, "LENGTH": 2}, {"IS_SPACE": True}, {"IS_DIGIT": True, "LENGTH": 4}]},
+            
+            # URL and Email patterns (using built-ins)
+            {"label": "URL", "pattern": [{"LIKE_URL": True}]},
+            {"label": "EMAIL", "pattern": [{"LIKE_EMAIL": True}]}
+        ]
+        
+        ruler.add_patterns(patterns)
+    
         
     def _extract_punctuation_spans(self, text: str) -> List[Dict[str, Any]]:
         """Extract punctuation spans from text."""
@@ -38,29 +69,21 @@ class SpacyJSONGenerator:
         
         return punct_spans
     
-    def _extract_special_tags(self, text: str) -> List[Dict[str, Any]]:
-        """Extract special tags like URLs, emails, etc."""
+    def _extract_special_tags_from_doc(self, doc) -> List[Dict[str, Any]]:
+        """Extract special tags from spaCy doc (NLEs are now in doc.ents)."""
         special_tags = []
         
-        # URL pattern
-        url_pattern = r'https?://[^\s<>"{}|\\^`\[\]]+'
-        for match in re.finditer(url_pattern, text):
-            special_tags.append({
-                "start": match.start(),
-                "end": match.end(),
-                "type": "URL",
-                "value": match.group()
-            })
+        # Filter NLE entities (non-standard NER labels)
+        nle_labels = {"PHONE", "ADDRESS", "IP_ADDRESS", "SSN", "URL", "EMAIL"}
         
-        # Email pattern
-        email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
-        for match in re.finditer(email_pattern, text):
-            special_tags.append({
-                "start": match.start(),
-                "end": match.end(),
-                "type": "EMAIL",
-                "value": match.group()
-            })
+        for ent in doc.ents:
+            if ent.label_ in nle_labels:
+                special_tags.append({
+                    "start": ent.start_char,
+                    "end": ent.end_char,
+                    "type": ent.label_,
+                    "value": ent.text
+                })
         
         return special_tags
     
@@ -83,19 +106,22 @@ class SpacyJSONGenerator:
         # Extract punctuation spans
         punct_spans = self._extract_punctuation_spans(original_text)
         
-        # Extract special tags (URLs, emails, etc.)
-        special_tags = self._extract_special_tags(original_text)
+        # Extract special tags (NLEs) from doc.ents
+        special_tags = self._extract_special_tags_from_doc(doc)
         
-        # Extract named entity spans with entity IDs
+        # Extract named entity spans with entity IDs (standard NER only)
         ner_spans = []
+        nle_labels = {"PHONE", "ADDRESS", "IP_ADDRESS", "SSN", "URL", "EMAIL"}
         
         for ent in doc.ents:
-            ner_spans.append({
-                "entity_id": f"{ent.label_}-{str(ent).upper().replace(' ', '_').replace('-', '_')}",
-                "start": ent.start_char,
-                "end": ent.end_char,
-                "label": ent.label_
-            })
+            # Only include standard NER entities, not NLEs
+            if ent.label_ not in nle_labels:
+                ner_spans.append({
+                    "entity_id": f"{ent.label_}-{str(ent).upper().replace(' ', '_').replace('-', '_')}",
+                    "start": ent.start_char,
+                    "end": ent.end_char,
+                    "label": ent.label_
+                })
         
         # Extract POS tokens and tags
         pos_tokens = []
