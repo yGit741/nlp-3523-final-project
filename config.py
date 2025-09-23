@@ -1,15 +1,8 @@
 import os
 from pathlib import Path
 from dotenv import load_dotenv
-
-# Load environment variables from .env file
 load_dotenv()
-
-
-
 class Config:
-    """Configuration class for GCS and other settings."""
-    
     # GCS Configuration
     GCS_CREDENTIALS_PATH = os.getenv('GCS_CREDENTIALS_PATH', None)
     GCS_BUCKET_NAME = os.getenv('GCS_BUCKET_NAME',None)

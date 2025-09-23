@@ -58,13 +58,8 @@ class LocalSaveDriver(BaseSaveDriver):
         """
         super().__init__(batch_size)
         self.output_dir = Path(output_dir)
-        
-        # Create output directory
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        
         print(f"LocalSaveDriver initialized:")
-        print(f"  - Output directory: {self.output_dir}")
-        print(f"  - Batch size: {self.batch_size}")
     
     def add_document(self, document):
         """
@@ -211,18 +206,12 @@ class CloudSaveDriver(BaseSaveDriver):
         
         # Initialize GCS client
         try:
-            if isinstance(self.credentials, str):
-                # Credentials from file path
-                self.client = self.storage.Client.from_service_account_json(
-                    self.credentials, 
-                    project=self.project_id
-                )
-            else:
-                # Credentials from JSON dict
-                self.client = self.storage.Client.from_service_account_info(
-                    self.credentials,
-                    project=self.project_id
-                )
+            
+            # Credentials from file path
+            self.client = self.storage.Client.from_service_account_json(
+                self.credentials, 
+                project=self.project_id
+            )
             
             # Get bucket reference
             self.bucket = self.client.bucket(self.bucket_name)
