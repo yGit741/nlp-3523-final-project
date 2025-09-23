@@ -20,12 +20,6 @@ def test_gcs_driver():
         print("✅ GCS configuration is valid")
     except Exception as e:
         print(f"❌ GCS configuration error: {e}")
-        print("\n💡 To configure GCS credentials, set these environment variables:")
-        print("   export GCS_BUCKET_NAME='your-bucket-name'")
-        print("   export GCS_PROJECT_ID='your-project-id'")
-        print("   export GCS_CREDENTIALS_PATH='path/to/service-account-key.json'")
-        print("   # OR")
-        print("   export GCS_SERVICE_ACCOUNT_KEY='{\"type\":\"service_account\",...}'")
         return
     
     # Initialize generator
