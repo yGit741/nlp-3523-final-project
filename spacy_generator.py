@@ -231,6 +231,7 @@ class SpacyJSONGenerator:
             if progress['documents_processed'] > 0:
                 documents_to_skip = progress['documents_processed']
                 initial_batch_count = progress['batch_count']
+                
                 print(f"🔄 Resuming from previous progress:")
                 print(f"   📄 Documents already processed: {progress['documents_processed']}")
                 print(f"   📦 Batches already created: {progress['batch_count']}")
@@ -251,32 +252,21 @@ class SpacyJSONGenerator:
                 print(f"❌ Error processing batch: {e}")
                 return {'processed': [None] * len(batch['text'])}
         
-        # Use HF map() with batch processing
-        print("🔄 Applying HF map() with batch processing...")
-        hf_map_start = time.time()
-        
-        processed_dataset = dataset['train'].map(
+        print(f"Skipping documents (if needed) and adding mapping")
+        processed_dataset = dataset['train'].skip(documents_to_skip * self.batch_size).map(
             process_batch_texts,
             batched=True,
-            batch_size=self.batch_size,  # Use spaCy batch size for HF map
-            remove_columns=['text']  # Remove original text column
+            batch_size=self.batch_size,  
+            remove_columns=['text']  
         )
         
-        hf_map_time = time.time() - hf_map_start
-        print(f"✅ HF map() setup completed in {hf_map_time:.3f}s")
-        
-        # Process and save data using the provided save driver
         print("💾 Processing and saving data...")
         
         processed_count = 0
-        skipped_count = 0
         
         try:
             for example in processed_dataset:
-                # Skip already processed documents
-                if skipped_count < documents_to_skip:
-                    skipped_count += 1
-                    continue
+                
                 
                 save_driver.add_document(example['processed'])            
                 processed_count += 1
