@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 
 from spacy_generator import SpacyJSONGenerator
-from Drivers import CloudSaveDriver
+from Drivers import CloudSaveDriver, CloudParquetSaveDriver
 from datasets import load_dataset
+from Config import Config
 
 def do_upload():    
     generator = SpacyJSONGenerator(batch_size=50, n_process=1,require_gpu=True)
@@ -12,8 +13,13 @@ def do_upload():
     print("Done loading dataset.")
     print("\n☁️  Initializing GCS CloudSaveDriver...")
     try:
-        gcs_save_driver = CloudSaveDriver(
+        # gcs_save_driver = CloudSaveDriver(
+        #     batch_size=50  # Small batch size for testing
+        # )
+        gcs_save_driver = CloudParquetSaveDriver(
+            # bucket_name=Config.GCS_BUCKET_NAME,
             batch_size=50  # Small batch size for testing
+            
         )
         print("Done init driver.")
     except Exception as e:
@@ -24,8 +30,8 @@ def do_upload():
         print("\nStarting GCS processing with detailed timing...")
         result_driver = generator.process_and_save(
             dataset=dataset,
-            save_driver=gcs_save_driver
-            # num_batches=1  # Process the whole dataset
+            save_driver=gcs_save_driver,
+            num_batches=40  # Process the whole dataset
         )
         
         
