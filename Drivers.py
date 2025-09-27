@@ -4,6 +4,8 @@ import time
 import json
 import tempfile
 import os
+import pyarrow as pa
+import pyarrow.parquet as pq
 class BaseSaveDriver(ABC):
     """
     Abstract base class for save drivers.
@@ -41,8 +43,6 @@ class BaseSaveDriver(ABC):
     def _save_current_batch(self):
         """Abstract method to save the current batch to storage."""
         pass
-
-
 class LocalSaveDriver(BaseSaveDriver):
     """
     Handles all file operations and memory management for saving processed batches to local disk.
@@ -184,9 +184,8 @@ class CloudSaveDriver(BaseSaveDriver):
             from google.cloud import storage
             from google.cloud.exceptions import GoogleCloudError
             
-            import os
+            from Config import Config
             
-            from config import Config
         except ImportError as e:
             raise ImportError(f"GCS dependencies not installed. Run: pip install google-cloud-storage. Error: {e}")
         
@@ -420,6 +419,85 @@ class CloudSaveDriver(BaseSaveDriver):
                 os.unlink(temp_file.name)
                 
                 return data
+                
+        except Exception as e:
+            print(f"❌ Failed to load batch from GCS: {e}")
+            return []
+
+class CloudParquetSaveDriver(CloudSaveDriver):
+    """
+    Google Cloud Storage (GCS) implementation for saving processed batches to parquet files.
+    """
+            
+    def _save_current_batch(self):
+        """
+        Save the current batch to GCS bucket.
+        """
+        if not self.current_batch:
+            return
+            
+        self.batch_count += 1
+        
+        # Create filename with timestamp and batch number
+        timestamp = int(time.time())
+        filename = f"batch_{self.batch_count:06d}_{timestamp}.parquet"
+        save_start = time.time()
+        try:
+            # Create temporary file for Parquet data
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.parquet', delete=False) as temp_file:
+                pa.Table.from_pylist(self.current_batch).to_pandas().to_parquet(temp_file.name)
+                temp_file_path = temp_file.name
+                
+                blob = self.bucket.blob(filename)
+                
+                for attempt in range(self.config.GCS_RETRY_ATTEMPTS):
+                    try:
+                        blob.upload_from_filename(temp_file_path, content_type='application/parquet')
+                        
+                        break
+                    except self.GoogleCloudError as e:
+                        if attempt == self.config.GCS_RETRY_ATTEMPTS - 1:
+                            raise
+                        print(f"⚠️  Upload attempt {attempt + 1} failed, retrying... Error: {e}")
+                        time.sleep(2 ** attempt)  # Exponential backoff
+                        
+                os.unlink(temp_file_path)  # Clean up
+                
+                save_time = time.time() - save_start
+                file_size_mb = len(json.dumps(self.current_batch)) / 1024 / 1024
+                
+                print(f"☁️  Saved batch {self.batch_count} with {len(self.current_batch)} documents to gs://{self.bucket_name}/{filename}")
+                print(f"   ⏱️  Upload time: {save_time:.3f}s, Size: {file_size_mb:.1f} MB, Rate: {len(self.current_batch)/save_time:.1f} docs/sec")
+        except Exception as e:
+            print(f"❌ Failed to save batch {self.batch_count} to GCS: {e}")
+            # Clean up temp file if it exists
+            try:
+                if 'temp_file_path' in locals():
+                    os.unlink(temp_file_path)
+            except:
+                pass
+            raise
+
+        
+    def load_batch(self, blob):
+        """
+        Load a batch from GCS.
+        """
+        try:
+            if isinstance(blob, str):
+                blob = self.bucket.blob(blob)
+            else:
+                # Download to temporary file
+                with tempfile.NamedTemporaryFile(mode='w+', suffix='.parquet', delete=False) as temp_file:
+                    blob.download_to_filename(temp_file.name)
+                    
+                    # Load Parquet data
+                    table = pq.read_table(temp_file.name)
+                    
+                    # Clean up
+                    os.unlink(temp_file.name)
+                    
+                    return table.to_pylist()
                 
         except Exception as e:
             print(f"❌ Failed to load batch from GCS: {e}")
