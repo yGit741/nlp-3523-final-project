@@ -166,7 +166,7 @@ class CloudSaveDriver(BaseSaveDriver):
     Google Cloud Storage (GCS) implementation for saving processed batches.
     """
     
-    def __init__(self, bucket_name=None, batch_size=100, progress_file="gcs_processing_progress.json"):
+    def __init__(self, bucket_name=None, project_id=None, batch_size=100, progress_file="gcs_processing_progress.json"):
         """
         Initialize the CloudSaveDriver with GCS support.
         
@@ -197,8 +197,8 @@ class CloudSaveDriver(BaseSaveDriver):
         # Validate and get GCS configuration
         try:
             self.config.validate_gcs_config()
-            self.bucket_name = bucket_name or self.config.GCS_BUCKET_NAME
-            self.project_id = self.config.GCS_PROJECT_ID
+            self.bucket_name = bucket_name
+            self.project_id = project_id
             self.credentials = self.config.get_gcs_credentials()
         except Exception as e:
             raise ValueError(f"GCS configuration error: {e}")
