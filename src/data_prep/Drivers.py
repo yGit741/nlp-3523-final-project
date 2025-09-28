@@ -428,7 +428,9 @@ class CloudParquetSaveDriver(CloudSaveDriver):
     """
     Google Cloud Storage (GCS) implementation for saving processed batches to parquet files.
     """
-            
+    def __init__(self, bucket_name=None, project_id=None, batch_size=100, progress_file="gcs_processing_progress.json"):
+        super().__init__(bucket_name, project_id, batch_size, progress_file)
+        
     def _save_current_batch(self):
         """
         Save the current batch to GCS bucket.
