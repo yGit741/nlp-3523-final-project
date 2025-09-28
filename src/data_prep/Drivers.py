@@ -247,7 +247,6 @@ class CloudSaveDriver(BaseSaveDriver):
         return {
             'documents_processed': 0,
             'batch_count': 0,
-            'last_processed_batch': None,
             'start_time': time.time()
         }
     
@@ -470,6 +469,8 @@ class CloudParquetSaveDriver(CloudSaveDriver):
                 
                 print(f"☁️  Saved batch {self.batch_count} with {len(self.current_batch)} documents to gs://{self.bucket_name}/{filename}")
                 print(f"   ⏱️  Upload time: {save_time:.3f}s, Size: {file_size_mb:.1f} MB, Rate: {len(self.current_batch)/save_time:.1f} docs/sec")
+                
+                self._save_progress()
         except Exception as e:
             print(f"❌ Failed to save batch {self.batch_count} to GCS: {e}")
             # Clean up temp file if it exists
