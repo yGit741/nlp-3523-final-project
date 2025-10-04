@@ -17,7 +17,7 @@ def do_upload():
         #     batch_size=50  # Small batch size for testing
         # )
         gcs_save_driver = CloudParquetSaveDriver(
-            # bucket_name=Config.GCS_BUCKET_NAME,
+            bucket_name=Config.GCS_BUCKET_NAME,
             batch_size=50  # Small batch size for testing
             
         )
@@ -31,7 +31,7 @@ def do_upload():
         result_driver = generator.process_and_save(
             dataset=dataset,
             save_driver=gcs_save_driver,
-            num_batches=40  # Process the whole dataset
+            num_batches=1  # Process the whole dataset
         )
         
         

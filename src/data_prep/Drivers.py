@@ -6,7 +6,6 @@ import tempfile
 import os
 import pyarrow as pa
 import pyarrow.parquet as pq
-from google.colab import drive
 class BaseSaveDriver(ABC):
     """
     Abstract base class for save drivers.
@@ -177,9 +176,7 @@ class CloudSaveDriver(BaseSaveDriver):
             progress_file: File to store processing progress for resumption
         """
         super().__init__(batch_size)
-        self.progress_path = '/content/drive/My Drive/nlp-3523-final-project/data_prep/' + progress_file
-        self.colab_drive = drive
-        self._mount_drive()
+        self.progress_file = progress_file
         self.progress_data = self._load_progress()
         
         # Import here to avoid dependency issues if GCS not installed
@@ -236,20 +233,11 @@ class CloudSaveDriver(BaseSaveDriver):
             self.batch_count = self.progress_data['batch_count']
             print(f"  - Resuming from: {self.documents_processed} docs, {self.batch_count} batches")
     
-    def _mount_drive(self):
-        """Mount the drive."""
-        if not os.path.exists('/content/drive/My Drive'):
-            print("🔗 Mounting Google Drive...")
-            self.colab_drive.mount('/content/drive')
-            print("✅ Google Drive mounted successfully")
-        else:
-            print("✅ Google Drive already mounted")
-        
     def _load_progress(self):
         """Load existing progress if available."""
-        if os.path.exists(self.progress_path):
+        if os.path.exists(self.progress_file):
             try:
-                with open(self.progress_path, 'r') as f:
+                with open(self.progress_file, 'r') as f:
                     progress = json.load(f)
                     print(f"📋 Loaded existing progress: {progress['documents_processed']} docs, {progress['batch_count']} batches")
                     return progress
@@ -271,7 +259,7 @@ class CloudSaveDriver(BaseSaveDriver):
         })
         
         try:
-            with open(self.progress_path, 'w') as f:
+            with open(self.progress_file, 'w') as f:
                 json.dump(self.progress_data, f, indent=2)
         except Exception as e:
             print(f"⚠️  Could not save progress: {e}")
