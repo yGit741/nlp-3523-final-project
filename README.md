@@ -15,7 +15,7 @@ This repository's main goal is to **divide the work** among three team members (
 ## 👥 Team Work Division
 
 ### Gilad (Data & Preprocessing)
-**Deliverable 1**: `python -m src.data_prep.prepare_data --dataset <name> --output <path>`  
+**Deliverable 1**: `python -m src.data_prep prepare --dataset <name> --output <path>`  
 **Deliverable 2**: `data/processed/<dataset_name>/`
 
 **Specific Data Processing Tasks:**
