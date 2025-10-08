@@ -51,3 +51,5 @@ data/*
 
 # --- Results ---
 results/*
+.env
+/secrets
