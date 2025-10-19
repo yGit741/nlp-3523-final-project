@@ -1,0 +1,14 @@
+[
+  {
+    "id": "qnli_0001",
+    "premise": "The Eiffel Tower is in Paris.",
+    "hypothesis": "Is the Eiffel Tower in Paris?",
+    "label": "entailment"
+  },
+  {
+    "id": "qnli_0002",
+    "premise": "Mount Everest is in Nepal.",
+    "hypothesis": "Is Mount Everest in Africa?",
+    "label": "not entailment"
+  }
+]

@@ -1,0 +1,14 @@
+[
+  {
+    "id": "rte_0001",
+    "premise": "All cats have tails.",
+    "hypothesis": "Mittens has a tail.",
+    "label": "entailment"
+  },
+  {
+    "id": "rte_0002",
+    "premise": "No birds can swim.",
+    "hypothesis": "Some birds can swim.",
+    "label": "not entailment"
+  }
+]

@@ -49,5 +49,7 @@ checkpoints/
 data/*
 !data/.gitkeep
 
+# --- Results ---
+results/*
 .env
 /secrets
