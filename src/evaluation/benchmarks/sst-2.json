@@ -1,0 +1,12 @@
+[
+  {
+    "id": "sst2_0001",
+    "sentence": "This movie was fantastic!",
+    "label": "positive"
+  },
+  {
+    "id": "sst2_0002",
+    "sentence": "The plot was dull and boring.",
+    "label": "negative"
+  }
+]

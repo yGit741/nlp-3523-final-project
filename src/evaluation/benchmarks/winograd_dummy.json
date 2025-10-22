@@ -1,0 +1,50 @@
+[
+  {
+    "id": "wsc_0001",
+    "text": "The trophy doesn't fit into the brown suitcase because it is too large.",
+    "question": "What is too large?",
+    "options": [
+      "the trophy",
+      "the suitcase"
+    ],
+    "answer": "the trophy",
+    "difficulty": "medium",
+    "reasoning": "coreference"
+  },
+  {
+    "id": "wsc_0002",
+    "text": "The trophy doesn't fit into the brown suitcase because it is too small.",
+    "question": "What is too small?",
+    "options": [
+      "the trophy",
+      "the suitcase"
+    ],
+    "answer": "the suitcase",
+    "difficulty": "medium",
+    "reasoning": "coreference"
+  },
+  {
+    "id": "wsc_0003",
+    "text": "The city councilmen refused the demonstrators a permit because they feared violence.",
+    "question": "Who feared violence?",
+    "options": [
+      "the city councilmen",
+      "the demonstrators"
+    ],
+    "answer": "the city councilmen",
+    "difficulty": "hard",
+    "reasoning": "commonsense"
+  },
+  {
+    "id": "wsc_0004",
+    "text": "The city councilmen refused the demonstrators a permit because they advocated violence.",
+    "question": "Who advocated violence?",
+    "options": [
+      "the city councilmen",
+      "the demonstrators"
+    ],
+    "answer": "the demonstrators",
+    "difficulty": "hard",
+    "reasoning": "commonsense"
+  }
+]
