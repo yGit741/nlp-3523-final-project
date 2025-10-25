@@ -23,6 +23,9 @@ venv/
 env/
 .env
 .env.*
+eastern-bridge-credentials.json
+*.json
+!environment.yml
 
 # --- Tool caches / reports ---
 .pytest_cache/

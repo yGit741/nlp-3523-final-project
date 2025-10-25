@@ -1,4 +1,4 @@
-name: not-to-know
+name: not-to-know-v2
 channels:
   - defaults
   - conda-forge
@@ -23,8 +23,15 @@ dependencies:
   - matplotlib         # plotting results, quick visualization
   - jupyterlab         # interactive notebooks for analysis & exploration
 
+  # GCS and data processing
+  - gcsfs              # Google Cloud Storage filesystem interface
+  - pyarrow            # Apache Arrow for efficient data processing
+  - polars             # fast DataFrame library
+  - tqdm               # progress bars
+
   # Pip-only packages
   - pip:
       - spacy          # NER and linguistic preprocessing (for masking pipeline)
       - seqeval        # evaluation metrics for sequence labeling (NER F1 score)
       - wandb          # experiment tracking, logging runs & metrics (optional, but recommended)
+      - langid         # language identification
